@@ -3,6 +3,10 @@
 Repo-local facts live here. Shared Open CLI Collective standards remain
 canonical in `cli-common`.
 
+The repository's Spotify-specific command and security contract is
+[`spotify-cli-behavior.md`](../spotify-cli-behavior.md). It defines the planned
+initial release; later ideas there are explicitly non-normative.
+
 ## Project
 
 - Module: `github.com/open-cli-collective/spotify-cli`
@@ -10,8 +14,8 @@ canonical in `cli-common`.
 - Main branch: `main`
 - Config, cache, and credential handling will use
   `github.com/open-cli-collective/cli-common`.
-- Spotify API integration is expected to use `github.com/zmb3/spotify/v2` when
-  the first API command is implemented.
+- Spotify API integration will use a thin typed `net/http` client plus
+  `golang.org/x/oauth2`; no third-party Spotify SDK is planned.
 - Distribution is not configured yet; add GoReleaser and package identity when
   the CLI has a releasable command surface.
 

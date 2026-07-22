@@ -18,10 +18,12 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/configcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/mecmd"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/searchcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/setcredential"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
+	"github.com/open-cli-collective/spotify-cli/internal/session"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 	"github.com/open-cli-collective/spotify-cli/internal/version"
 )
@@ -102,9 +104,11 @@ func New(deps Dependencies) *cobra.Command {
 		},
 		SaveConfig: deps.SaveConfig,
 	}))
-	cmd.AddCommand(mecmd.New(mecmd.Dependencies{
-		Scope: deps.Scope, OpenStore: deps.OpenStore, Backend: &backend, Now: deps.Now,
-		HTTPClient: deps.HTTPClient, TokenURL: deps.OAuthEndpoints.TokenURL, APIBaseURL: deps.APIBaseURL,
-	}))
+	sessionOpener := session.Opener{
+		Scope: deps.Scope, OpenStore: deps.OpenStore, Now: deps.Now, HTTPClient: deps.HTTPClient,
+		TokenURL: deps.OAuthEndpoints.TokenURL, APIBaseURL: deps.APIBaseURL,
+	}
+	cmd.AddCommand(mecmd.New(mecmd.Dependencies{OpenSession: sessionOpener.Open, Backend: &backend}))
+	cmd.AddCommand(searchcmd.New(searchcmd.Dependencies{OpenSession: sessionOpener.Open, Backend: &backend}))
 	return cmd
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
+	"github.com/open-cli-collective/spotify-cli/internal/session"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
@@ -83,7 +84,7 @@ func TestMeRefreshesAndPersistsSameCredential(t *testing.T) {
 				t.Fatalf("refresh form = %v", r.Form)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"new-access","token_type":"Bearer","expires_in":3600}`))
+			_, _ = w.Write([]byte(`{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"scope":"playlist-read-private user-read-private"}`))
 		case "/v1/me":
 			if r.Header.Get("Authorization") != "Bearer new-access" {
 				t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
@@ -101,15 +102,19 @@ func TestMeRefreshesAndPersistsSameCredential(t *testing.T) {
 		AccessToken: "old-access", TokenType: "Bearer", RefreshToken: "old-refresh",
 		ExpiresAt: now.Add(-time.Minute), Scopes: []string{"user-read-private"},
 	})
-	if _, err := harness.execute(); err != nil {
+	stdout, err := harness.execute()
+	if err != nil {
 		t.Fatal(err)
 	}
 	stored, err := token.Decode([]byte(harness.store.values["default/"+credentials.OAuthTokenKey]), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.AccessToken != "new-access" || stored.RefreshToken != "old-refresh" || strings.Join(stored.Scopes, ",") != "user-read-private" {
+	if stored.AccessToken != "new-access" || stored.RefreshToken != "old-refresh" || strings.Join(stored.Scopes, ",") != "playlist-read-private,user-read-private" {
 		t.Fatalf("stored token = %+v", stored)
+	}
+	if !strings.Contains(stdout, "scopes\tplaylist-read-private,user-read-private\n") {
+		t.Fatalf("stdout = %q", stdout)
 	}
 	if harness.store.setCalls != 1 || !harness.store.overwrite {
 		t.Fatalf("set calls = %d overwrite = %t", harness.store.setCalls, harness.store.overwrite)
@@ -277,13 +282,17 @@ func (harness *meHarness) execute(args ...string) (string, error) {
 }
 
 func (harness *meHarness) executeTo(stdout io.Writer, args ...string) error {
-	command := New(Dependencies{
+	opener := session.Opener{
 		Scope: harness.scope,
 		OpenStore: func(credentials.OpenRequest) (credentials.Store, error) {
 			return harness.store, nil
 		},
-		Backend: &harness.backend, Now: func() time.Time { return harness.now },
-		HTTPClient: harness.httpClient, TokenURL: harness.tokenURL, APIBaseURL: harness.apiBaseURL,
+		Now: func() time.Time { return harness.now }, HTTPClient: harness.httpClient,
+		TokenURL: harness.tokenURL, APIBaseURL: harness.apiBaseURL,
+	}
+	command := New(Dependencies{
+		OpenSession: opener.Open,
+		Backend:     &harness.backend,
 	})
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})

@@ -46,6 +46,29 @@ For a prompt-free setup, supply `--non-interactive`. Use `--no-browser` to
 open the printed URL yourself, or `--auth-code-stdin` to paste the complete
 redirected URL back into the command.
 
+## Search
+
+Search tracks with one Spotify query. The default output includes album and
+artist IDs as relationship breadcrumbs:
+
+```sh
+sptfy search track 'artist:"Björk"' --max 10
+```
+
+```text
+ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION
+```
+
+Spotify development-mode search is limited to 10 results per page. When more
+results exist, `sptfy` writes an opaque `--next-page-token` hint to stderr;
+table rows remain on stdout. `--id` emits one track ID per line and overrides
+all other shape flags. `--extended` widens the default columns, `--fields`
+replaces the selection, and `--include-artwork` adds Spotify-hosted image
+dimensions and URLs. Resource search intentionally has no JSON mode.
+
+To keep every result on one line, carriage returns, newlines, and the reserved
+` | ` separator sequence inside Spotify text are replaced with one space.
+
 ## Development
 
 Requires Go 1.26 or newer.

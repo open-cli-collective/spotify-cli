@@ -56,6 +56,9 @@ func (source *persistentTokenSource) Token() (*oauth2.Token, error) {
 
 	value, err := source.base.Token()
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		var retrieve *oauth2.RetrieveError
 		if errors.As(err, &retrieve) && retrieve.ErrorCode == "invalid_grant" {
 			return nil, ErrInvalidGrant

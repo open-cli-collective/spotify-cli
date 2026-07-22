@@ -132,6 +132,27 @@ func TestUnknownCommandsAreUsageErrors(t *testing.T) {
 	}
 }
 
+func TestSearchTrackIsWiredToAuthenticatedSession(t *testing.T) {
+	h := newHarness(t)
+	cfg := config.Default()
+	cfg.ClientID = "client-id"
+	if err := config.Save(h.deps.Scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	err := h.execute("search", "track", "query")
+	if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+		t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
+	}
+}
+
+func TestSearchTrackRejectsJSONBeforeSession(t *testing.T) {
+	h := newHarness(t)
+	err := h.execute("search", "track", "query", "--json")
+	if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+		t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
+	}
+}
+
 func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Now = func() time.Time { return time.Now().UTC() }
@@ -154,6 +175,12 @@ func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(writer, `{"account_id":"account-1","display_name":"Ada","id":"spotify-1","uri":"spotify:user:spotify-1"}`)
+		case "/v1/search":
+			if request.Header.Get("Authorization") != "Bearer access-token-canary" || request.URL.Query().Get("q") != "Ada" || request.URL.Query().Get("type") != "track" {
+				t.Errorf("search authorization/query = %q %v", request.Header.Get("Authorization"), request.URL.Query())
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, `{"tracks":{"items":[{"id":"track-1","name":"Song","artists":[{"id":"artist-1","name":"Ada"}],"album":{"id":"album-1","name":"Album"},"duration_ms":61000}],"limit":10,"offset":0,"total":1,"next":null}}`)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -222,6 +249,16 @@ func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	if meCalls != 2 {
 		t.Fatalf("me calls = %d, want verify plus command", meCalls)
 	}
+
+	h.out.Reset()
+	h.errOut.Reset()
+	if err := h.execute("search", "track", "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	wantSearch := "ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\ntrack-1 | Song | artist-1 | Ada | album-1 | Album | 1:01\n"
+	if h.out.String() != wantSearch || h.errOut.Len() != 0 {
+		t.Fatalf("search stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
 }
 
 func TestInitRequiresStdinModeForHTTPSCallback(t *testing.T) {
@@ -237,13 +274,15 @@ func TestInitRequiresStdinModeForHTTPSCallback(t *testing.T) {
 
 func TestBackendValidationRunsForStoreFreeCommands(t *testing.T) {
 	for _, backend := range []string{"definitely-invalid", "memory"} {
-		h := newHarness(t)
-		err := h.execute("--backend", backend, "config", "path")
-		if exitcode.Code(err) != exitcode.Usage {
-			t.Fatalf("backend %q: error = %v, code = %d", backend, err, exitcode.Code(err))
-		}
-		if len(h.requests) != 0 {
-			t.Fatalf("backend %q opened store", backend)
+		for _, args := range [][]string{{"config", "path"}, {"search", "track", "query"}} {
+			h := newHarness(t)
+			err := h.execute(append([]string{"--backend", backend}, args...)...)
+			if exitcode.Code(err) != exitcode.Usage {
+				t.Fatalf("backend %q args %v: error = %v, code = %d", backend, args, err, exitcode.Code(err))
+			}
+			if len(h.requests) != 0 {
+				t.Fatalf("backend %q args %v opened store", backend, args)
+			}
 		}
 	}
 }

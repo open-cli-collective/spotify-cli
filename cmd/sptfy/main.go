@@ -4,9 +4,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/open-cli-collective/cli-common/statedir"
+	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -24,15 +26,27 @@ func main() {
 
 func run() int {
 	cmd := root.New(root.Dependencies{
-		In:        os.Stdin,
-		Out:       os.Stdout,
-		ErrOut:    os.Stderr,
-		Scope:     statedir.Scope{Name: config.Service},
-		Cache:     statedir.Cache{Tool: config.Tool},
-		Data:      statedir.Data{Tool: config.Tool},
-		OpenStore: credentials.ProductionOpener(promptFilePassphrase),
+		In:          os.Stdin,
+		Out:         os.Stdout,
+		ErrOut:      os.Stderr,
+		Scope:       statedir.Scope{Name: config.Service},
+		Cache:       statedir.Cache{Tool: config.Tool},
+		Data:        statedir.Data{Tool: config.Tool},
+		OpenStore:   credentials.ProductionOpener(promptFilePassphrase),
+		Interactive: term.IsTerminal(int(os.Stdin.Fd())),
+		OpenBrowser: browser.OpenURL,
+		HTTPClient:  spotifyHTTPClient(),
 	})
 	return executeCommand(cmd)
+}
+
+func spotifyHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: http.DefaultTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func executeCommand(cmd *cobra.Command) int {

@@ -12,9 +12,9 @@ initial release; later ideas there are explicitly non-normative.
 - Module: `github.com/open-cli-collective/spotify-cli`
 - Binary: `sptfy`
 - Main branch: `main`
-- Config, cache, and credential handling will use
+- Config, cache, and credential handling use
   `github.com/open-cli-collective/cli-common`.
-- Spotify API integration will use a thin typed `net/http` client plus
+- Spotify API integration uses a thin typed `net/http` client plus
   `golang.org/x/oauth2`; no third-party Spotify SDK is planned.
 - Distribution is not configured yet; add GoReleaser and package identity when
   the CLI has a releasable command surface.

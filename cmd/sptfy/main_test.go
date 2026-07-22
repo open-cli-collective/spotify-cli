@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +48,50 @@ func TestUnknownCommandsExitUsage(t *testing.T) {
 		if code := executeCommand(cmd); code != exitcode.Usage {
 			t.Fatalf("args %v: exit = %d, stderr = %q", args, code, errOut.String())
 		}
+	}
+}
+
+func TestMeMissingConfigurationAtProcessBoundary(t *testing.T) {
+	statedirtest.Hermetic(t)
+	var out, errOut bytes.Buffer
+	cmd := root.New(root.Dependencies{
+		In: &bytes.Buffer{}, Out: &out, ErrOut: &errOut,
+		Scope: statedir.Scope{Name: config.Service}, Cache: statedir.Cache{Tool: config.Tool}, Data: statedir.Data{Tool: config.Tool},
+	})
+	cmd.SetArgs([]string{"me"})
+	if code := executeCommand(cmd); code != exitcode.Config {
+		t.Fatalf("exit = %d, stderr = %q", code, errOut.String())
+	}
+	if out.Len() != 0 || !strings.Contains(errOut.String(), "spotify client ID is not configured; run sptfy init") {
+		t.Fatalf("stdout = %q, stderr = %q", out.String(), errOut.String())
+	}
+}
+
+func TestSpotifyHTTPClientDoesNotForwardOAuthPostOnRedirect(t *testing.T) {
+	const secret = "oauth-post-secret-sentinel"
+	forwarded := false
+	destination := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		forwarded = true
+		body, _ := io.ReadAll(request.Body)
+		if strings.Contains(string(body), secret) {
+			t.Error("redirect destination received OAuth secret")
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Location", destination.URL)
+		writer.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	response, err := spotifyHTTPClient().Post(source.URL, "application/x-www-form-urlencoded", strings.NewReader("code="+secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusTemporaryRedirect || forwarded {
+		t.Fatalf("status = %d, forwarded = %t", response.StatusCode, forwarded)
 	}
 }
 

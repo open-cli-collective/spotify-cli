@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +18,7 @@ import (
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
+	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
@@ -124,6 +129,109 @@ func TestUnknownCommandsAreUsageErrors(t *testing.T) {
 		if exitcode.Code(err) != exitcode.Usage {
 			t.Fatalf("args %v: error = %v, code = %d", args, err, exitcode.Code(err))
 		}
+	}
+}
+
+func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
+	h := newHarness(t)
+	h.deps.Now = func() time.Time { return time.Now().UTC() }
+	var meCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			if err := request.ParseForm(); err != nil {
+				t.Errorf("parse token form: %v", err)
+			}
+			if request.Form.Get("client_id") != "client-id" || request.Form.Get("code") != "code" || request.Form.Get("client_secret") != "" {
+				t.Errorf("token form = %v", request.Form)
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, `{"access_token":"access-token-canary","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-token-canary","scope":"user-read-private"}`)
+		case "/v1/me":
+			meCalls++
+			if request.Header.Get("Authorization") != "Bearer access-token-canary" {
+				t.Errorf("authorization header = %q", request.Header.Get("Authorization"))
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, `{"account_id":"account-1","display_name":"Ada","id":"spotify-1","uri":"spotify:user:spotify-1"}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	h.deps.HTTPClient = server.Client()
+	h.deps.OAuthEndpoints = auth.Endpoints{AuthorizeURL: server.URL + "/authorize", TokenURL: server.URL + "/token"}
+	h.deps.APIBaseURL = server.URL + "/v1"
+	callbackErrors := make(chan error, 1)
+	h.deps.OpenBrowser = func(rawAuthURL string) error {
+		authURL, err := url.Parse(rawAuthURL)
+		if err != nil {
+			return err
+		}
+		callback, err := url.Parse(authURL.Query().Get("redirect_uri"))
+		if err != nil {
+			return err
+		}
+		query := callback.Query()
+		query.Set("code", "code")
+		query.Set("state", authURL.Query().Get("state"))
+		callback.RawQuery = query.Encode()
+		go func() {
+			response, err := h.deps.HTTPClient.Get(callback.String())
+			if err != nil {
+				callbackErrors <- err
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusOK {
+				callbackErrors <- fmt.Errorf("callback status %d", response.StatusCode)
+				return
+			}
+			callbackErrors <- nil
+		}()
+		return nil
+	}
+
+	if err := h.execute("init", "--non-interactive", "--client-id", "client-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-callbackErrors; err != nil {
+		t.Fatal(err)
+	}
+	if h.out.Len() != 0 {
+		t.Fatalf("init stdout = %q", h.out.String())
+	}
+	if got := h.errOut.String(); !strings.Contains(got, "Authorization URL:") || !strings.Contains(got, "Authenticated as account-1.") || !strings.Contains(got, "Setup complete.") {
+		t.Fatalf("init stderr = %q", got)
+	}
+	if strings.Contains(h.errOut.String(), "access-token-canary") || strings.Contains(h.errOut.String(), "refresh-token-canary") {
+		t.Fatalf("init leaked token: %q", h.errOut.String())
+	}
+
+	h.out.Reset()
+	h.errOut.Reset()
+	if err := h.execute("me"); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.out.String(); got != "account_id\taccount-1\ndisplay_name\tAda\nspotify_id\tspotify-1\nuri\tspotify:user:spotify-1\nscopes\tuser-read-private\n" {
+		t.Fatalf("me stdout = %q", got)
+	}
+	if h.errOut.Len() != 0 {
+		t.Fatalf("me stderr = %q", h.errOut.String())
+	}
+	if meCalls != 2 {
+		t.Fatalf("me calls = %d, want verify plus command", meCalls)
+	}
+}
+
+func TestInitRequiresStdinModeForHTTPSCallback(t *testing.T) {
+	h := newHarness(t)
+	err := h.execute(
+		"init", "--non-interactive", "--client-id", "client-id",
+		"--redirect-uri", "https://callback.example/spotify", "--no-verify",
+	)
+	if exitcode.Code(err) != exitcode.Usage || !errors.Is(err, auth.ErrInvalidCallback) {
+		t.Fatalf("error = %v, code = %d", err, exitcode.Code(err))
 	}
 }
 

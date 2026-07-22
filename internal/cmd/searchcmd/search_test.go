@@ -123,7 +123,7 @@ func TestTrackSearchDoesNotAdvertiseOffsetPastCeiling(t *testing.T) {
 }
 
 func TestAlbumSearchExactShapesAndPagination(t *testing.T) {
-	body := `{"albums":{"items":[{"id":"album-1","name":"Debut","artists":[{"id":"artist-1","name":"Björk"}],"release_date":"1993","total_tracks":12,"images":[{"url":"https://image","width":640,"height":640}]}],"limit":1,"offset":0,"total":2,"next":"ignored-provider-url"}}`
+	body := `{"albums":{"items":[{"id":"album-1","name":"Debut","artists":[{"id":"artist-1","name":"Björk"}],"release_date":"1993","release_date_precision":"year","total_tracks":12,"album_type":"album","uri":"spotify:album:album-1","external_urls":{"spotify":"https://open.spotify.com/album/album-1"},"images":[{"url":"https://image","width":640,"height":640}],"restrictions":{"reason":"market"}}],"limit":1,"offset":0,"total":2,"next":"ignored-provider-url"}}`
 	for _, test := range []struct {
 		name string
 		args []string
@@ -133,6 +133,8 @@ func TestAlbumSearchExactShapesAndPagination(t *testing.T) {
 		{name: "id overrides fields", args: []string{"album", "q", "--max", "1", "--id", "--fields", "invalid"}, want: "album-1\n"},
 		{name: "fields", args: []string{"album", "q", "--max", "1", "--fields", "album,artist_ids"}, want: "ALBUM | ARTIST_IDS\nDebut | artist-1\n"},
 		{name: "artwork", args: []string{"album", "q", "--max", "1", "--fields", "artwork"}, want: "ARTWORK\n640x640 https://image\n"},
+		{name: "extended", args: []string{"album", "q", "--max", "1", "--extended"}, want: "ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS | URI | URL | ALBUM_TYPE | RELEASE_DATE_PRECISION | RESTRICTION\nalbum-1 | Debut | artist-1 | Björk | 1993 | 12 | spotify:album:album-1 | https://open.spotify.com/album/album-1 | album | year | market\n"},
+		{name: "include artwork", args: []string{"album", "q", "--max", "1", "--include-artwork"}, want: "ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS | ARTWORK\nalbum-1 | Debut | artist-1 | Björk | 1993 | 12 | 640x640 https://image\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			stdout, stderr, opens, err := executeSearch(body, test.args...)
@@ -140,6 +142,11 @@ func TestAlbumSearchExactShapesAndPagination(t *testing.T) {
 				t.Fatalf("stdout=%q stderr=%q opens=%d error=%v", stdout, stderr, opens, err)
 			}
 		})
+	}
+	empty := `{"albums":{"items":[],"limit":10,"offset":0,"total":0,"next":null}}`
+	stdout, stderr, _, err := executeSearch(empty, "album", "no match")
+	if err != nil || stdout != "ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n" || stderr != "" {
+		t.Fatalf("empty stdout=%q stderr=%q error=%v", stdout, stderr, err)
 	}
 }
 
@@ -152,6 +159,7 @@ func TestArtistSearchExactShapesAndEmptyResult(t *testing.T) {
 	}{
 		{name: "default", args: []string{"artist", "Björk"}, want: "ID | ARTIST | GENRES\nartist-1 | Björk | art pop\n"},
 		{name: "id overrides fields", args: []string{"artist", "q", "--id", "--fields", "invalid"}, want: "artist-1\n"},
+		{name: "fields", args: []string{"artist", "q", "--fields", "artist,url"}, want: "ARTIST | URL\nBjörk | https://open.spotify.com/artist/artist-1\n"},
 		{name: "extended", args: []string{"artist", "q", "--extended"}, want: "ID | ARTIST | GENRES | URI | URL\nartist-1 | Björk | art pop | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
 		{name: "artwork", args: []string{"artist", "q", "--include-artwork"}, want: "ID | ARTIST | GENRES | ARTWORK\nartist-1 | Björk | art pop | 320x320 https://image\n"},
 	} {

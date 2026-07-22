@@ -1,16 +1,63 @@
-// Command sptfy is the Spotify CLI entrypoint.
+// Command sptfy is the Spotify CLI entrypoint and production composition root.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/open-cli-collective/cli-common/statedir"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/root"
+	"github.com/open-cli-collective/spotify-cli/internal/config"
+	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 )
 
 func main() {
-	if err := root.New().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if code := run(); code != exitcode.Success {
+		os.Exit(code)
 	}
+}
+
+func run() int {
+	cmd := root.New(root.Dependencies{
+		In:        os.Stdin,
+		Out:       os.Stdout,
+		ErrOut:    os.Stderr,
+		Scope:     statedir.Scope{Name: config.Service},
+		Cache:     statedir.Cache{Tool: config.Tool},
+		Data:      statedir.Data{Tool: config.Tool},
+		OpenStore: credentials.ProductionOpener(promptFilePassphrase),
+	})
+	return executeCommand(cmd)
+}
+
+func executeCommand(cmd *cobra.Command) int {
+	if err := cmd.Execute(); err != nil {
+		if !exitcode.Quiet(err) {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), err)
+		}
+		return exitcode.Code(err)
+	}
+	return exitcode.Success
+}
+
+func promptFilePassphrase() (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return "", errors.New("encrypted-file backend needs a TTY prompt or SPOTIFY_CLI_KEYRING_PASSPHRASE")
+	}
+	_, _ = fmt.Fprint(os.Stderr, "Keyring passphrase: ")
+	value, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", errors.New("reading keyring passphrase failed")
+	}
+	if len(value) == 0 {
+		return "", errors.New("keyring passphrase must not be empty")
+	}
+	return string(value), nil
 }

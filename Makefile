@@ -1,4 +1,5 @@
 BINARY := sptfy
+BUILD_TAGS := keyring_nopassage
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -10,16 +11,16 @@ LDFLAGS := -ldflags "-s -w \
 .PHONY: build test test-cover lint fmt tidy deps check install clean
 
 build:
-	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sptfy
+	go build -tags $(BUILD_TAGS) $(LDFLAGS) -o bin/$(BINARY) ./cmd/sptfy
 
 test:
-	go test ./...
+	go test -tags $(BUILD_TAGS) ./...
 
 test-cover:
-	go test -coverprofile=coverage.out ./...
+	go test -tags $(BUILD_TAGS) -coverprofile=coverage.out ./...
 
 lint:
-	golangci-lint run
+	golangci-lint run --build-tags $(BUILD_TAGS)
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
@@ -35,7 +36,7 @@ deps:
 check: tidy fmt lint test build
 
 install:
-	go install ./cmd/sptfy
+	go install -tags $(BUILD_TAGS) ./cmd/sptfy
 
 clean:
 	rm -rf bin/ dist/ coverage.out

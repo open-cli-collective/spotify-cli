@@ -205,7 +205,8 @@ The initial suite proves only the shipped surface.
 - Every production credential backend can be selected; memory is test-only.
 - `set-credential` accepts only the declared token key and secret ingress
   channels.
-- Configuration output reports presence and backend metadata, never values.
+- Configuration output reports non-secret values, credential presence, and
+  backend metadata, but never credential contents or other secret values.
 - `config clear`, `config clear --dry-run`, and `config clear --all` remain
   scoped to the active credential reference.
 - `me` succeeds for valid/refreshable credentials and fails for missing,

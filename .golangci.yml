@@ -1,0 +1,34 @@
+version: "2"
+
+run:
+  go: "1.26"
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+    - gosec
+    - errorlint
+    - exhaustive
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - errorlint
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/open-cli-collective/spotify-cli

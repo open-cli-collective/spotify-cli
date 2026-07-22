@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-platform:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: open-cli-collective/.github/actions/go-build@v1
+        with:
+          go-version-file: go.mod
+
+  build:
+    needs: [build-platform]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: echo "::error::a build-platform leg failed or was cancelled" && exit 1
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: open-cli-collective/.github/actions/go-test@v1
+        with:
+          go-version-file: go.mod
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: open-cli-collective/.github/actions/go-lint@v1
+        with:
+          go-version-file: go.mod
+
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: open-cli-collective/.github/actions/pr-title@v1
+        with:
+          title: ${{ github.event.pull_request.title }}

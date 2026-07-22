@@ -59,20 +59,24 @@ the OAuth credential itself in configuration or a runtime environment value.
 
 ## Search
 
-Search tracks with one Spotify query. The default output includes album and
-artist IDs as relationship breadcrumbs:
+Search tracks, albums, or artists with one Spotify query. Track and album
+output includes relationship IDs as breadcrumbs:
 
 ```sh
 sptfy search track 'artist:"Björk"' --max 10
+sptfy search album 'artist:"Björk"' --max 10
+sptfy search artist 'Björk' --max 10
 ```
 
 ```text
 ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION
+ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS
+ID | ARTIST | GENRES
 ```
 
 Spotify development-mode search is limited to 10 results per page. When more
 results exist, `sptfy` writes an opaque `--next-page-token` hint to stderr;
-table rows remain on stdout. `--id` emits one track ID per line and overrides
+table rows remain on stdout. `--id` emits one resource ID per line and overrides
 all other shape flags. `--extended` widens the default columns, `--fields`
 replaces the selection, and `--include-artwork` adds Spotify-hosted image
 dimensions and URLs. Resource search intentionally has no JSON mode.

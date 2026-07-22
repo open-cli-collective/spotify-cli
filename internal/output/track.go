@@ -129,13 +129,7 @@ func trackCell(track client.Track, field TrackField) string {
 	case TrackRestriction:
 		return cell(track.Restrictions.Reason)
 	case TrackArtwork:
-		images := make([]string, 0, len(track.Album.Images))
-		for _, image := range track.Album.Images {
-			if strings.TrimSpace(image.URL) != "" {
-				images = append(images, fmt.Sprintf("%sx%s %s", dimension(image.Width), dimension(image.Height), sanitize(image.URL)))
-			}
-		}
-		return cell(strings.Join(images, ","))
+		return renderArtwork(track.Album.Images)
 	default:
 		return "-"
 	}

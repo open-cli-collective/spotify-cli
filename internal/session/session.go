@@ -63,6 +63,16 @@ func (session *Session) SearchTracks(ctx context.Context, query string, limit, o
 	return session.client.SearchTracks(ctx, query, limit, offset)
 }
 
+// SearchAlbums searches albums with the authenticated Spotify client.
+func (session *Session) SearchAlbums(ctx context.Context, query string, limit, offset int) (client.AlbumPage, error) {
+	return session.client.SearchAlbums(ctx, query, limit, offset)
+}
+
+// SearchArtists searches artists with the authenticated Spotify client.
+func (session *Session) SearchArtists(ctx context.Context, query string, limit, offset int) (client.ArtistPage, error) {
+	return session.client.SearchArtists(ctx, query, limit, offset)
+}
+
 // Scopes returns the scopes currently attached to the persisted OAuth token.
 func (session *Session) Scopes() []string {
 	session.mu.RLock()

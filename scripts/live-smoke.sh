@@ -67,6 +67,20 @@ live_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$page_err"
 "$SPTFY" --backend file search track a --id --max 1
 "$SPTFY" --backend file search track a --fields TRACK,ALBUM_ID,ARTWORK --max 1
 
+album_out=$("$SPTFY" --backend file search album 'artist:"Björk"' --max 1)
+[[ $(sed -n '1p' <<<"$album_out") == 'ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS' ]] || { printf '%s\n' 'album search returned an unexpected shape' >&2; exit 1; }
+[[ $(wc -l <<<"$album_out") -eq 2 ]] || { printf '%s\n' 'album search did not return exactly one row' >&2; exit 1; }
+"$SPTFY" --backend file search album 'artist:"Björk"' --id --max 1
+"$SPTFY" --backend file search album 'artist:"Björk"' --fields ALBUM,ARTIST_IDS,ARTWORK --max 1
+"$SPTFY" --backend file search album 'artist:"Björk"' --extended --max 1
+
+artist_out=$("$SPTFY" --backend file search artist 'Björk' --max 1)
+[[ $(sed -n '1p' <<<"$artist_out") == 'ID | ARTIST | GENRES' ]] || { printf '%s\n' 'artist search returned an unexpected shape' >&2; exit 1; }
+[[ $(wc -l <<<"$artist_out") -eq 2 ]] || { printf '%s\n' 'artist search did not return exactly one row' >&2; exit 1; }
+"$SPTFY" --backend file search artist 'Björk' --id --max 1
+"$SPTFY" --backend file search artist 'Björk' --fields ARTIST,ARTWORK --max 1
+"$SPTFY" --backend file search artist 'Björk' --extended --max 1
+
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID" --overwrite
 if [[ $live_dry != 1 ]]; then
   go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^TestExpireCredential$' -count=1

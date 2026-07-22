@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
+	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
@@ -94,6 +96,29 @@ func TestOpenErrorsDoNotEchoStoredCredential(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesCatalogSearch(t *testing.T) {
+	var types []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		searchType := request.URL.Query().Get("type")
+		types = append(types, searchType)
+		body := `{"albums":{"items":[],"limit":1,"offset":0,"total":0,"next":null}}`
+		if searchType == "artist" {
+			body = `{"artists":{"items":[],"limit":1,"offset":0,"total":0,"next":null}}`
+		}
+		return response(http.StatusOK, body), nil
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	if _, err := authenticated.SearchAlbums(context.Background(), "album", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticated.SearchArtists(context.Background(), "artist", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(types, ",") != "album,artist" {
+		t.Fatalf("types = %v", types)
+	}
+}
+
 func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
 	t.Helper()
 	statedirtest.Hermetic(t)
@@ -132,4 +157,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
+}
+
+func response(status int, body string) *http.Response {
+	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }

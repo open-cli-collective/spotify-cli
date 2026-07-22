@@ -46,24 +46,36 @@ type User struct {
 	URI         string `json:"uri"`
 }
 
-// Artist is the breadcrumb identity attached to a track.
+// Artist is the typed subset of Spotify artist data rendered by the CLI.
 type Artist struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Genres       []string     `json:"genres"`
+	URI          string       `json:"uri"`
+	ExternalURLs ExternalURLs `json:"external_urls"`
+	Images       []Image      `json:"images"`
 }
 
-// Image is one Spotify-hosted album image.
+// Image is one Spotify-hosted catalog image.
 type Image struct {
 	URL    string `json:"url"`
 	Height *int   `json:"height"`
 	Width  *int   `json:"width"`
 }
 
-// Album is the parent breadcrumb attached to a track.
+// Album is the typed subset of Spotify album data rendered by the CLI.
 type Album struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Images []Image `json:"images"`
+	ID                   string       `json:"id"`
+	Name                 string       `json:"name"`
+	Artists              []Artist     `json:"artists"`
+	Images               []Image      `json:"images"`
+	ReleaseDate          string       `json:"release_date"`
+	ReleaseDatePrecision string       `json:"release_date_precision"`
+	TotalTracks          int          `json:"total_tracks"`
+	AlbumType            string       `json:"album_type"`
+	URI                  string       `json:"uri"`
+	ExternalURLs         ExternalURLs `json:"external_urls"`
+	Restrictions         Restriction  `json:"restrictions"`
 }
 
 // ExternalURLs contains public Spotify web URLs.
@@ -71,7 +83,7 @@ type ExternalURLs struct {
 	Spotify string `json:"spotify"`
 }
 
-// Restriction explains why a track is unavailable.
+// Restriction explains why a catalog resource is unavailable.
 type Restriction struct {
 	Reason string `json:"reason"`
 }
@@ -94,6 +106,24 @@ type Track struct {
 // TrackPage is one validated Spotify search page.
 type TrackPage struct {
 	Items   []Track
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
+// AlbumPage is one validated Spotify album-search page.
+type AlbumPage struct {
+	Items   []Album
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
+// ArtistPage is one validated Spotify artist-search page.
+type ArtistPage struct {
+	Items   []Artist
 	Offset  int
 	Limit   int
 	Total   int
@@ -136,6 +166,60 @@ func (client Client) SearchTracks(ctx context.Context, query string, limit, offs
 	return TrackPage{
 		Items: *response.Tracks.Items, Offset: response.Tracks.Offset, Limit: response.Tracks.Limit,
 		Total: response.Tracks.Total, HasNext: response.Tracks.Next != nil && *response.Tracks.Next != "",
+	}, nil
+}
+
+type albumSearchResponse struct {
+	Albums *struct {
+		Items  *[]Album `json:"items"`
+		Limit  int      `json:"limit"`
+		Next   *string  `json:"next"`
+		Offset int      `json:"offset"`
+		Total  int      `json:"total"`
+	} `json:"albums"`
+}
+
+// SearchAlbums returns one album-search page without following provider pagination URLs.
+func (client Client) SearchAlbums(ctx context.Context, query string, limit, offset int) (AlbumPage, error) {
+	values := url.Values{"q": {query}, "type": {"album"}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response albumSearchResponse
+	if err := client.getJSON(ctx, "/search?"+values.Encode(), &response); err != nil {
+		return AlbumPage{}, err
+	}
+	if response.Albums == nil || response.Albums.Offset != offset || response.Albums.Limit != limit ||
+		response.Albums.Items == nil || response.Albums.Total < 0 || len(*response.Albums.Items) > limit {
+		return AlbumPage{}, ErrInvalidResponse
+	}
+	return AlbumPage{
+		Items: *response.Albums.Items, Offset: response.Albums.Offset, Limit: response.Albums.Limit,
+		Total: response.Albums.Total, HasNext: response.Albums.Next != nil && *response.Albums.Next != "",
+	}, nil
+}
+
+type artistSearchResponse struct {
+	Artists *struct {
+		Items  *[]Artist `json:"items"`
+		Limit  int       `json:"limit"`
+		Next   *string   `json:"next"`
+		Offset int       `json:"offset"`
+		Total  int       `json:"total"`
+	} `json:"artists"`
+}
+
+// SearchArtists returns one artist-search page without following provider pagination URLs.
+func (client Client) SearchArtists(ctx context.Context, query string, limit, offset int) (ArtistPage, error) {
+	values := url.Values{"q": {query}, "type": {"artist"}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response artistSearchResponse
+	if err := client.getJSON(ctx, "/search?"+values.Encode(), &response); err != nil {
+		return ArtistPage{}, err
+	}
+	if response.Artists == nil || response.Artists.Offset != offset || response.Artists.Limit != limit ||
+		response.Artists.Items == nil || response.Artists.Total < 0 || len(*response.Artists.Items) > limit {
+		return ArtistPage{}, ErrInvalidResponse
+	}
+	return ArtistPage{
+		Items: *response.Artists.Items, Offset: response.Artists.Offset, Limit: response.Artists.Limit,
+		Total: response.Artists.Total, HasNext: response.Artists.Next != nil && *response.Artists.Next != "",
 	}, nil
 }
 

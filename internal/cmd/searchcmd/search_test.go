@@ -38,7 +38,7 @@ func TestTrackSearchUsesContinuationOffset(t *testing.T) {
 	command := New(Dependencies{OpenSession: opener})
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"track", "q", "--next-page-token", encodePageToken(10)})
+	command.SetArgs([]string{"track", "q", "--next-page-token", encodePageToken("track", 10)})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -116,9 +116,97 @@ func TestTrackSearchClassifiesAPIFailuresWithoutLeakingBodies(t *testing.T) {
 
 func TestTrackSearchDoesNotAdvertiseOffsetPastCeiling(t *testing.T) {
 	body := `{"tracks":{"items":[],"limit":10,"offset":1000,"total":2000,"next":"ignored-provider-url"}}`
-	stdout, stderr, _, err := executeSearch(body, "track", "q", "--next-page-token", encodePageToken(1000))
+	stdout, stderr, _, err := executeSearch(body, "track", "q", "--next-page-token", encodePageToken("track", 1000))
 	if err != nil || stdout != "ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n" || stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q error=%v", stdout, stderr, err)
+	}
+}
+
+func TestAlbumSearchExactShapesAndPagination(t *testing.T) {
+	body := `{"albums":{"items":[{"id":"album-1","name":"Debut","artists":[{"id":"artist-1","name":"Björk"}],"release_date":"1993","total_tracks":12,"images":[{"url":"https://image","width":640,"height":640}]}],"limit":1,"offset":0,"total":2,"next":"ignored-provider-url"}}`
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default", args: []string{"album", `artist:"Björk"`, "--max", "1"}, want: "ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\nalbum-1 | Debut | artist-1 | Björk | 1993 | 12\n"},
+		{name: "id overrides fields", args: []string{"album", "q", "--max", "1", "--id", "--fields", "invalid"}, want: "album-1\n"},
+		{name: "fields", args: []string{"album", "q", "--max", "1", "--fields", "album,artist_ids"}, want: "ALBUM | ARTIST_IDS\nDebut | artist-1\n"},
+		{name: "artwork", args: []string{"album", "q", "--max", "1", "--fields", "artwork"}, want: "ARTWORK\n640x640 https://image\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, opens, err := executeSearch(body, test.args...)
+			if err != nil || stdout != test.want || stderr != "More results available (next: djE6YWxidW06MQ)\n" || opens != 1 {
+				t.Fatalf("stdout=%q stderr=%q opens=%d error=%v", stdout, stderr, opens, err)
+			}
+		})
+	}
+}
+
+func TestArtistSearchExactShapesAndEmptyResult(t *testing.T) {
+	body := `{"artists":{"items":[{"id":"artist-1","name":"Björk","genres":["art pop"],"uri":"spotify:artist:artist-1","external_urls":{"spotify":"https://open.spotify.com/artist/artist-1"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":10,"offset":0,"total":1,"next":null}}`
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default", args: []string{"artist", "Björk"}, want: "ID | ARTIST | GENRES\nartist-1 | Björk | art pop\n"},
+		{name: "id overrides fields", args: []string{"artist", "q", "--id", "--fields", "invalid"}, want: "artist-1\n"},
+		{name: "extended", args: []string{"artist", "q", "--extended"}, want: "ID | ARTIST | GENRES | URI | URL\nartist-1 | Björk | art pop | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
+		{name: "artwork", args: []string{"artist", "q", "--include-artwork"}, want: "ID | ARTIST | GENRES | ARTWORK\nartist-1 | Björk | art pop | 320x320 https://image\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, opens, err := executeSearch(body, test.args...)
+			if err != nil || stdout != test.want || stderr != "" || opens != 1 {
+				t.Fatalf("stdout=%q stderr=%q opens=%d error=%v", stdout, stderr, opens, err)
+			}
+		})
+	}
+	empty := `{"artists":{"items":[],"limit":10,"offset":0,"total":0,"next":null}}`
+	stdout, stderr, _, err := executeSearch(empty, "artist", "no match")
+	if err != nil || stdout != "ID | ARTIST | GENRES\n" || stderr != "" {
+		t.Fatalf("empty stdout=%q stderr=%q error=%v", stdout, stderr, err)
+	}
+}
+
+func TestCatalogSearchValidatesBeforeSession(t *testing.T) {
+	invalid := [][]string{
+		{"album", " "},
+		{"artist", "q", "--max", "0"},
+		{"album", "q", "--max", "11"},
+		{"artist", "q", "--fields", "invalid"},
+		{"album", "q", "--next-page-token", encodePageToken("artist", 1)},
+		{"artist", "q", "--next-page-token", encodePageToken("track", 1)},
+	}
+	for _, args := range invalid {
+		_, _, opens, err := executeSearch(``, args...)
+		if exitcode.Code(err) != exitcode.Usage || opens != 0 {
+			t.Fatalf("args=%v error=%v code=%d opens=%d", args, err, exitcode.Code(err), opens)
+		}
+	}
+}
+
+func TestCatalogSearchUsesOwnContinuationOffset(t *testing.T) {
+	for _, surface := range []string{"album", "artist"} {
+		var offset string
+		body := `{"albums":{"items":[],"limit":1,"offset":10,"total":10,"next":null}}`
+		if surface == "artist" {
+			body = `{"artists":{"items":[],"limit":1,"offset":10,"total":10,"next":null}}`
+		}
+		httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			offset = request.URL.Query().Get("offset")
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}
+		opener := func(context.Context, string, bool) (Session, error) {
+			return session.New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil), nil
+		}
+		command := New(Dependencies{OpenSession: opener})
+		command.SetOut(io.Discard)
+		command.SetErr(io.Discard)
+		command.SetArgs([]string{surface, "q", "--max", "1", "--next-page-token", encodePageToken(surface, 10)})
+		if err := command.Execute(); err != nil || offset != "10" {
+			t.Fatalf("surface=%s offset=%q error=%v", surface, offset, err)
+		}
 	}
 }
 

@@ -41,6 +41,29 @@ elif [[ $args == *" search track "* ]]; then
   if [[ $args == *" --max 1 "* && $args != *" --next-page-token "* ]]; then
     printf 'More results available (next: token)\n' >&2
   fi
+elif [[ $args == *" search album "* ]]; then
+  if [[ $args == *" --id "* ]]; then
+    printf 'album-1\n'
+  elif [[ $args == *" --fields "* ]]; then
+    printf 'ALBUM | ARTIST_IDS | ARTWORK\nDebut | artist-1 | 640x640 https://image\n'
+  elif [[ $args == *" --extended "* ]]; then
+    printf 'ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS | URI | URL | ALBUM_TYPE | RELEASE_DATE_PRECISION | RESTRICTION\n'
+    printf 'album-1 | Debut | artist-1 | Björk | 1993 | 12 | spotify:album:album-1 | https://open.spotify.com/album/album-1 | album | year | -\n'
+  else
+    printf 'ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n'
+    printf 'album-1 | Debut | artist-1 | Björk | 1993 | 12\n'
+  fi
+elif [[ $args == *" search artist "* ]]; then
+  if [[ $args == *" --id "* ]]; then
+    printf 'artist-1\n'
+  elif [[ $args == *" --fields "* ]]; then
+    printf 'ARTIST | ARTWORK\nBjörk | 320x320 https://image\n'
+  elif [[ $args == *" --extended "* ]]; then
+    printf 'ID | ARTIST | GENRES | URI | URL\n'
+    printf 'artist-1 | Björk | art pop | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n'
+  else
+    printf 'ID | ARTIST | GENRES\nartist-1 | Björk | art pop\n'
+  fi
 fi
 FAKE
 chmod +x "$fake"

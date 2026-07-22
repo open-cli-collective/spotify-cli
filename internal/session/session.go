@@ -20,13 +20,20 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
-// OpenFunc opens an authenticated session for a command invocation.
-type OpenFunc func(context.Context, string, bool) (*Session, error)
+// CredentialStore is the credential capability required by a session.
+type CredentialStore interface {
+	Close() error
+	Get(profile, key string) (string, error)
+	Set(profile, key, value string, opts ...credstore.SetOpt) error
+}
+
+// StoreOpener opens the credential capability required by a session.
+type StoreOpener func(credentials.OpenRequest) (CredentialStore, error)
 
 // Opener contains the effects needed to restore an authenticated session.
 type Opener struct {
 	Scope      statedir.Scope
-	OpenStore  credentials.Opener
+	OpenStore  StoreOpener
 	Now        func() time.Time
 	HTTPClient *http.Client
 	TokenURL   string
@@ -35,7 +42,7 @@ type Opener struct {
 
 // Session exposes only the authenticated client, granted scopes, and lifecycle.
 type Session struct {
-	Client client.Client
+	client client.Client
 	mu     sync.RWMutex
 	scopes []string
 	close  func() error
@@ -43,7 +50,17 @@ type Session struct {
 
 // New creates a session around an authenticated client.
 func New(spotifyClient client.Client, scopes []string, closeSession func() error) *Session {
-	return &Session{Client: spotifyClient, scopes: append([]string(nil), scopes...), close: closeSession}
+	return &Session{client: spotifyClient, scopes: append([]string(nil), scopes...), close: closeSession}
+}
+
+// Me returns the authenticated Spotify identity.
+func (session *Session) Me(ctx context.Context) (client.User, error) {
+	return session.client.Me(ctx)
+}
+
+// SearchTracks searches tracks with the authenticated Spotify client.
+func (session *Session) SearchTracks(ctx context.Context, query string, limit, offset int) (client.TrackPage, error) {
+	return session.client.SearchTracks(ctx, query, limit, offset)
 }
 
 // Scopes returns the scopes currently attached to the persisted OAuth token.
@@ -117,7 +134,7 @@ func (opener Opener) Open(ctx context.Context, backend string, backendSet bool) 
 	if opener.HTTPClient != nil {
 		oauthContext = context.WithValue(ctx, oauth2.HTTPClient, opener.HTTPClient)
 	}
-	authenticated.Client = client.Client{
+	authenticated.client = client.Client{
 		HTTPClient: oauth2.NewClient(oauthContext, tokenSource),
 		BaseURL:    opener.APIBaseURL,
 	}

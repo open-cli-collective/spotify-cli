@@ -31,4 +31,3 @@ keychain_probe:
     .backend: keychain
     .backend_source: auto
     .credential_ref: spotify-cli/default
-

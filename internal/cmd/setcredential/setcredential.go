@@ -22,10 +22,20 @@ import (
 
 const maxEnvelopeBytes = 1 << 20
 
+// CredentialStore is the credential capability required by set-credential.
+type CredentialStore interface {
+	Backend() (credstore.Backend, credstore.Source)
+	Close() error
+	Set(profile, key, value string, opts ...credstore.SetOpt) error
+}
+
+// StoreOpener opens the credential capability required by set-credential.
+type StoreOpener func(credentials.OpenRequest) (CredentialStore, error)
+
 // Dependencies contains the runtime effects used by set-credential.
 type Dependencies struct {
 	Scope     statedir.Scope
-	OpenStore credentials.Opener
+	OpenStore StoreOpener
 	Backend   *string
 	Now       func() time.Time
 }

@@ -24,7 +24,7 @@ func TestOpenPassesBackendAndClosesPrivateStore(t *testing.T) {
 		ExpiresAt: now.Add(time.Hour), Scopes: []string{"user-read-private"},
 	})
 	var request credentials.OpenRequest
-	opener := Opener{Scope: scope, Now: func() time.Time { return now }, OpenStore: func(value credentials.OpenRequest) (credentials.Store, error) {
+	opener := Opener{Scope: scope, Now: func() time.Time { return now }, OpenStore: func(value credentials.OpenRequest) (CredentialStore, error) {
 		request = value
 		return store, nil
 	}}
@@ -57,7 +57,7 @@ func TestOpenSessionRefreshUsesCommandContext(t *testing.T) {
 	})}
 	ctx, cancel := context.WithCancel(context.Background())
 	opener := Opener{
-		Scope: scope, OpenStore: func(credentials.OpenRequest) (credentials.Store, error) { return store, nil },
+		Scope: scope, OpenStore: func(credentials.OpenRequest) (CredentialStore, error) { return store, nil },
 		Now: func() time.Time { return now }, HTTPClient: httpClient,
 		TokenURL: "https://accounts.spotify.invalid/token", APIBaseURL: "https://api.spotify.invalid/v1",
 	}
@@ -67,7 +67,7 @@ func TestOpenSessionRefreshUsesCommandContext(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := authenticated.Client.Me(ctx)
+		_, err := authenticated.Me(ctx)
 		done <- err
 	}()
 	<-started
@@ -87,7 +87,7 @@ func TestOpenErrorsDoNotEchoStoredCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &memoryStore{values: map[string]string{"default/oauth_token": "secret-canary-invalid"}}
-	opener := Opener{Scope: scope, OpenStore: func(credentials.OpenRequest) (credentials.Store, error) { return store, nil }, Now: func() time.Time { return now }}
+	opener := Opener{Scope: scope, OpenStore: func(credentials.OpenRequest) (CredentialStore, error) { return store, nil }, Now: func() time.Time { return now }}
 	_, err := opener.Open(context.Background(), "", false)
 	if err == nil || strings.Contains(err.Error(), "secret-canary") || !store.closed {
 		t.Fatalf("error=%v closed=%t", err, store.closed)
@@ -115,9 +115,6 @@ type memoryStore struct {
 	closed bool
 }
 
-func (store *memoryStore) Backend() (credstore.Backend, credstore.Source) {
-	return credstore.BackendMemory, credstore.SourceExplicit
-}
 func (store *memoryStore) Close() error { store.closed = true; return nil }
 func (store *memoryStore) Get(profile, key string) (string, error) {
 	value, ok := store.values[profile+"/"+key]
@@ -129,14 +126,6 @@ func (store *memoryStore) Get(profile, key string) (string, error) {
 func (store *memoryStore) Set(profile, key, value string, _ ...credstore.SetOpt) error {
 	store.values[profile+"/"+key] = value
 	return nil
-}
-func (store *memoryStore) Delete(profile, key string) error {
-	delete(store.values, profile+"/"+key)
-	return nil
-}
-func (store *memoryStore) Exists(profile, key string) (bool, error) {
-	_, ok := store.values[profile+"/"+key]
-	return ok, nil
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

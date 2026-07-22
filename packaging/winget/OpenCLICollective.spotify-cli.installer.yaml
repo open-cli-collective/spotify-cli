@@ -16,4 +16,3 @@ Installers:
     InstallerSha256: CHECKSUM_ARM64_PLACEHOLDER
 ManifestType: installer
 ManifestVersion: 1.10.0
-

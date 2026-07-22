@@ -19,9 +19,13 @@ import (
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/configcmd"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/setcredential"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
+	"github.com/open-cli-collective/spotify-cli/internal/session"
 )
 
 type fakeStore struct {
@@ -90,6 +94,10 @@ func newHarness(t *testing.T) *harness {
 			source:  credstore.SourceExplicit,
 		},
 	}
+	openStore := func(request credentials.OpenRequest) (*fakeStore, error) {
+		h.requests = append(h.requests, request)
+		return h.store, nil
+	}
 	h.deps = Dependencies{
 		In:     h.in,
 		Out:    h.out,
@@ -98,9 +106,17 @@ func newHarness(t *testing.T) *harness {
 		Cache:  statedir.Cache{Tool: config.Tool},
 		Data:   statedir.Data{Tool: config.Tool},
 		Now:    func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) },
-		OpenStore: func(request credentials.OpenRequest) (credentials.Store, error) {
-			h.requests = append(h.requests, request)
-			return h.store, nil
+		OpenConfigStore: func(request credentials.OpenRequest) (configcmd.CredentialStore, error) {
+			return openStore(request)
+		},
+		OpenInitStore: func(request credentials.OpenRequest) (initcmd.CredentialStore, error) {
+			return openStore(request)
+		},
+		OpenSessionStore: func(request credentials.OpenRequest) (session.CredentialStore, error) {
+			return openStore(request)
+		},
+		OpenSetCredentialStore: func(request credentials.OpenRequest) (setcredential.CredentialStore, error) {
+			return openStore(request)
 		},
 	}
 	return h
@@ -289,7 +305,10 @@ func TestBackendValidationRunsForStoreFreeCommands(t *testing.T) {
 
 func TestSetCredentialInvalidBackendJSONIsStructured(t *testing.T) {
 	h := newHarness(t)
-	h.deps.OpenStore = credentials.ProductionOpener(nil)
+	openStore := credentials.ProductionOpener(nil)
+	h.deps.OpenSetCredentialStore = func(request credentials.OpenRequest) (setcredential.CredentialStore, error) {
+		return openStore(request)
+	}
 	h.in.WriteString(`{"version":1,"access_token":"access","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`)
 	err := h.execute("--backend", "memory", "set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token", "--stdin", "--json")
 	if exitcode.Code(err) != exitcode.Usage || !exitcode.Quiet(err) {
@@ -305,7 +324,7 @@ func TestSetCredentialInvalidBackendJSONIsStructured(t *testing.T) {
 
 func TestSupportedButUnavailableBackendIsConfigError(t *testing.T) {
 	h := newHarness(t)
-	h.deps.OpenStore = func(credentials.OpenRequest) (credentials.Store, error) {
+	h.deps.OpenSetCredentialStore = func(credentials.OpenRequest) (setcredential.CredentialStore, error) {
 		return nil, fmt.Errorf("%w: unavailable on this platform", credstore.ErrBackendNotImplemented)
 	}
 	h.in.WriteString(`{"version":1,"access_token":"access","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`)

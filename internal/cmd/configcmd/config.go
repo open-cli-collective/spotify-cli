@@ -21,12 +21,23 @@ import (
 
 const filePassphraseEnv = "SPOTIFY_CLI_KEYRING_PASSPHRASE" // #nosec G101 -- environment variable name.
 
+// CredentialStore is the credential capability required by config commands.
+type CredentialStore interface {
+	Backend() (credstore.Backend, credstore.Source)
+	Close() error
+	Delete(profile, key string) error
+	Exists(profile, key string) (bool, error)
+}
+
+// StoreOpener opens the credential capability required by config commands.
+type StoreOpener func(credentials.OpenRequest) (CredentialStore, error)
+
 // Dependencies contains the runtime effects used by config commands.
 type Dependencies struct {
 	Scope     statedir.Scope
 	Cache     statedir.Cache
 	Data      statedir.Data
-	OpenStore credentials.Opener
+	OpenStore StoreOpener
 	Backend   *string
 }
 

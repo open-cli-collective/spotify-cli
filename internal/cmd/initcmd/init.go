@@ -2,12 +2,10 @@
 package initcmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/open-cli-collective/cli-common/credstore"
@@ -19,7 +17,6 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
-	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
 // Setup contains every value edited by the interactive form.
@@ -33,14 +30,10 @@ type Setup struct {
 // Dependencies contains the runtime effects used by init.
 type Dependencies struct {
 	Scope       statedir.Scope
-	OpenStore   credentials.Opener
 	Backend     *string
-	Now         func() time.Time
 	Interactive bool
 	Prompt      func(*Setup) error
-	Authorize   func(context.Context, auth.Request) (token.Envelope, error)
-	Verify      func(context.Context, config.Config, token.Envelope) (client.User, error)
-	SaveConfig  func(config.Config) error
+	Initializer Initializer
 }
 
 // New constructs the init command.
@@ -132,77 +125,20 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 		return exitcode.New(exitcode.Usage, err)
 	}
 
-	store, err := dependencies.OpenStore(credentials.OpenRequest{
-		Config: configValue, Backend: runtimeBackend, BackendSet: runtimeBackendSet,
+	result, err := dependencies.Initializer.Initialize(command.Context(), InitializeOptions{
+		Config: configValue, Profile: profile, Backend: runtimeBackend, BackendSet: runtimeBackendSet,
+		Overwrite: overwrite, Verify: !noVerify,
+		Authorization: auth.Request{
+			ClientID: configValue.ClientID, RedirectURI: configValue.RedirectURI,
+			NoBrowser: noBrowser || authCodeStdin, AuthCodeStdin: authCodeStdin,
+			In: command.InOrStdin(), ErrOut: command.ErrOrStderr(),
+		},
 	})
 	if err != nil {
-		return exitcode.New(exitcode.Config, errors.New("opening credential store failed"))
+		return classifyInitialization(err)
 	}
-	defer func() { _ = store.Close() }()
-	present, err := store.Exists(profile, credentials.OAuthTokenKey)
-	if err != nil {
-		return exitcode.New(exitcode.Config, errors.New("checking existing Spotify authorization failed"))
-	}
-	var previous string
-	if present {
-		if !overwrite {
-			return exitcode.New(exitcode.Generic, fmt.Errorf("%w at %s; use --overwrite or sptfy config clear", credstore.ErrExists, configValue.CredentialRef))
-		}
-		previous, err = store.Get(profile, credentials.OAuthTokenKey)
-		if err != nil {
-			return exitcode.New(exitcode.Config, errors.New("reading existing Spotify authorization for rollback failed"))
-		}
-	}
-	if dependencies.Authorize == nil {
-		return exitcode.New(exitcode.Generic, errors.New("spotify authorizer is unavailable"))
-	}
-	envelope, err := dependencies.Authorize(command.Context(), auth.Request{
-		ClientID: configValue.ClientID, RedirectURI: configValue.RedirectURI,
-		NoBrowser: noBrowser || authCodeStdin, AuthCodeStdin: authCodeStdin,
-		In: command.InOrStdin(), ErrOut: command.ErrOrStderr(),
-	})
-	if err != nil {
-		return classifyAuthorization(err)
-	}
-	var user client.User
-	if !noVerify {
-		if dependencies.Verify == nil {
-			return exitcode.New(exitcode.Generic, errors.New("spotify verifier is unavailable"))
-		}
-		user, err = dependencies.Verify(command.Context(), configValue, envelope)
-		if err != nil {
-			return classifyVerification(err)
-		}
-	}
-
-	now := time.Now()
-	if dependencies.Now != nil {
-		now = dependencies.Now()
-	}
-	encoded, err := token.Encode(envelope, now)
-	if err != nil {
-		return exitcode.New(exitcode.Config, err)
-	}
-	options := []credstore.SetOpt(nil)
-	if overwrite {
-		options = append(options, credstore.WithOverwrite())
-	}
-	if err := store.Set(profile, credentials.OAuthTokenKey, string(encoded), options...); err != nil {
-		return exitcode.New(exitcode.Config, redactStoreError(err, previous, string(encoded), envelope))
-	}
-	saveConfig := dependencies.SaveConfig
-	if saveConfig == nil {
-		saveConfig = func(value config.Config) error { return config.Save(dependencies.Scope, value) }
-	}
-	if err := saveConfig(configValue); err != nil {
-		rollbackErr := rollbackCredential(store, profile, previous, present)
-		if rollbackErr != nil {
-			rollbackErr = redactStoreError(rollbackErr, previous, string(encoded), envelope)
-		}
-		return exitcode.New(exitcode.Config, errors.Join(errors.New("saving configuration failed"), rollbackErr))
-	}
-	if !noVerify {
-		if _, err := fmt.Fprintf(command.ErrOrStderr(), "Authenticated as %s.\n", user.AccountID); err != nil {
+	if result.Verified {
+		if _, err := fmt.Fprintf(command.ErrOrStderr(), "Authenticated as %s.\n", result.User.AccountID); err != nil {
 			return exitcode.New(exitcode.Generic, errors.New("writing setup confirmation failed"))
 		}
 	}
@@ -210,6 +146,24 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 		return exitcode.New(exitcode.Generic, errors.New("writing setup confirmation failed"))
 	}
 	return nil
+}
+
+func classifyInitialization(err error) error {
+	var failure *initializationFailure
+	if !errors.As(err, &failure) {
+		return exitcode.New(exitcode.Generic, err)
+	}
+	switch failure.kind {
+	case failureGeneric:
+		return exitcode.New(exitcode.Generic, failure.err)
+	case failureConfig:
+		return exitcode.New(exitcode.Config, failure.err)
+	case failureAuthorization:
+		return classifyAuthorization(failure.err)
+	case failureVerification:
+		return classifyVerification(failure.err)
+	}
+	return exitcode.New(exitcode.Generic, failure.err)
 }
 
 func classifyAuthorization(err error) error {
@@ -243,25 +197,6 @@ func RunPrompt(input io.Reader, output io.Writer, setup *Setup) error {
 			huh.NewOption("1Password Desktop", "op-desktop"),
 		).Value(&setup.Backend),
 	)).WithInput(input).WithOutput(output).Run()
-}
-
-func rollbackCredential(store credentials.Store, profile, previous string, existed bool) error {
-	if existed {
-		return store.Set(profile, credentials.OAuthTokenKey, previous, credstore.WithOverwrite())
-	}
-	if err := store.Delete(profile, credentials.OAuthTokenKey); err != nil && !errors.Is(err, credstore.ErrNotFound) {
-		return err
-	}
-	return nil
-}
-
-func redactStoreError(err error, previous, encoded string, envelope token.Envelope) error {
-	redactor := credstore.NewRedactor(previous, encoded, envelope.AccessToken, envelope.RefreshToken)
-	message := redactor.Redact(err.Error())
-	if message == "" {
-		message = "credential store operation failed"
-	}
-	return errors.New(message)
 }
 
 func classifyVerification(err error) error {

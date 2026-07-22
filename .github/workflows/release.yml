@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   release:
+    # The CLI family intentionally follows the centrally maintained rolling v1.
     uses: open-cli-collective/.github/.github/workflows/release.yml@v1
     with:
       dry-run: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry-run == true || inputs.dry-run == 'true') }}
@@ -28,4 +29,3 @@ jobs:
       macos-cert-password: ${{ secrets.MACOS_CERT_PASSWORD }}
       macos-cert-cn: ${{ secrets.MACOS_CERT_CN }}
       macos-cert-leaf-sha: ${{ secrets.MACOS_CERT_LEAF_SHA }}
-

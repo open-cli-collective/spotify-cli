@@ -2,6 +2,7 @@
 package mecmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,12 +16,21 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
-	"github.com/open-cli-collective/spotify-cli/internal/session"
 )
+
+// Session is the authenticated capability required by me.
+type Session interface {
+	Close() error
+	Scopes() []string
+	Me(context.Context) (client.User, error)
+}
+
+// SessionOpener opens the authenticated capability required by me.
+type SessionOpener func(context.Context, string, bool) (Session, error)
 
 // Dependencies contains the runtime effects used by me.
 type Dependencies struct {
-	OpenSession session.OpenFunc
+	OpenSession SessionOpener
 	Backend     *string
 }
 
@@ -61,7 +71,7 @@ func run(command *cobra.Command, dependencies Dependencies, jsonOutput bool) err
 	if !slices.Contains(authenticated.Scopes(), auth.ScopeUserReadPrivate) {
 		return exitcode.New(exitcode.Config, errors.New("spotify authorization lacks user-read-private; run sptfy init"))
 	}
-	user, err := authenticated.Client.Me(command.Context())
+	user, err := authenticated.Me(command.Context())
 	if err != nil {
 		return classify(err)
 	}

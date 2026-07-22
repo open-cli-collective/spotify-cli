@@ -32,16 +32,6 @@ func ValidateExplicitBackend(value string, set bool) error {
 	return nil
 }
 
-// Store is the effect boundary command tests replace.
-type Store interface {
-	Backend() (credstore.Backend, credstore.Source)
-	Close() error
-	Get(profile, key string) (string, error)
-	Set(profile, key, value string, opts ...credstore.SetOpt) error
-	Delete(profile, key string) error
-	Exists(profile, key string) (bool, error)
-}
-
 // OpenRequest contains credential backend selection inputs.
 type OpenRequest struct {
 	Config     config.Config
@@ -49,12 +39,9 @@ type OpenRequest struct {
 	BackendSet bool
 }
 
-// Opener opens a credential store for a command.
-type Opener func(OpenRequest) (Store, error)
-
 // ProductionOpener returns the concrete cli-common store opener.
-func ProductionOpener(filePassphrase func() (string, error)) Opener {
-	return func(request OpenRequest) (Store, error) {
+func ProductionOpener(filePassphrase func() (string, error)) func(OpenRequest) (*credstore.Store, error) {
+	return func(request OpenRequest) (*credstore.Store, error) {
 		opts, err := buildOptions(request, filePassphrase)
 		if err != nil {
 			return nil, err

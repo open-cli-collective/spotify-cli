@@ -23,7 +23,10 @@ sudo dnf install spotify-cli
 
 ## Setup
 
-Create a Spotify application and add this redirect URI in its dashboard:
+Create a Spotify Development Mode application in the Spotify developer
+dashboard. The app owner must have Spotify Premium, and every dedicated test
+account must be added under the app's Users Management page. Note the client
+ID and add this exact redirect URI to the app's allowlist:
 
 ```text
 http://127.0.0.1/callback
@@ -45,6 +48,14 @@ granted scopes to stdout.
 For a prompt-free setup, supply `--non-interactive`. Use `--no-browser` to
 open the printed URL yourself, or `--auth-code-stdin` to paste the complete
 redirected URL back into the command.
+
+The default credential backend is the native store for the current OS. Select
+one explicitly with the global `--backend` flag: `keychain` (macOS), `wincred`
+(Windows), `secret-service` (Linux), `file`, `pass`, `op`, `op-connect`, or
+`op-desktop`. Selection precedence is flag, `SPOTIFY_CLI_KEYRING_BACKEND`,
+config, then OS default. The encrypted `file` backend prompts for a passphrase
+on a TTY; automation can set `SPOTIFY_CLI_KEYRING_PASSPHRASE` without placing
+the OAuth credential itself in configuration or a runtime environment value.
 
 ## Search
 
@@ -81,6 +92,24 @@ go run ./cmd/sptfy --help
 
 Shared CLI behavior and repository conventions come from
 [`open-cli-collective/cli-common`](https://github.com/open-cli-collective/cli-common).
+
+### Live verification
+
+The live smoke uses a dedicated Spotify app/account and a temporary encrypted
+file store. It pins all supported OS state-directory variables under one
+temporary root and removes that root on exit; it never uses normal CLI state or
+an OS keychain. It is opt-in and is not part of ordinary CI:
+
+```sh
+SPOTIFY_CLI_LIVE=1 \
+SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+SPOTIFY_CLIENT_ID=your_client_id \
+make live-smoke
+```
+
+The harness is interactive because Spotify authorization opens a browser. It
+exercises setup, identity, refresh, search/pagination shapes, replacement,
+clear, and re-initialization without exporting the stored OAuth credential.
 
 ## License
 

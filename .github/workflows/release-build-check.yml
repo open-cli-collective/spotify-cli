@@ -1,0 +1,41 @@
+name: Release build check
+
+on:
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "version.txt"
+      - ".goreleaser.yml"
+      - "Makefile"
+      - "scripts/verify-package-render.sh"
+      - "packaging/**"
+      - ".github/workflows/auto-release.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-build-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # Keep this distinct from ci.yml's required build context. This workflow is
+  # path-filtered, so it intentionally remains an additional release gate.
+  release-build-check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2.17.0
+          install-only: true
+      - name: GoReleaser check
+        run: goreleaser check
+      - name: Build and verify release snapshot
+        run: make snapshot

@@ -26,6 +26,27 @@ func TestTrackSearchExactStreamsAndPagination(t *testing.T) {
 	}
 }
 
+func TestTrackSearchUsesContinuationOffset(t *testing.T) {
+	var offset string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		offset = request.URL.Query().Get("offset")
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"tracks":{"items":[],"limit":10,"offset":10,"total":10,"next":null}}`))}, nil
+	})}
+	opener := func(context.Context, string, bool) (Session, error) {
+		return session.New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil), nil
+	}
+	command := New(Dependencies{OpenSession: opener})
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"track", "q", "--next-page-token", encodePageToken(10)})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if offset != "10" {
+		t.Fatalf("offset=%q", offset)
+	}
+}
+
 func TestTrackSearchOutputShapes(t *testing.T) {
 	body := `{"tracks":{"items":[{"id":"track-1","name":"Song","artists":[],"album":{"id":"album-1","images":[{"url":"https://image","width":640,"height":640}]},"duration_ms":0,"uri":"spotify:track:track-1","external_urls":{"spotify":"https://open.spotify.com/track/track-1"},"disc_number":1,"track_number":2,"explicit":true,"restrictions":{"reason":"market"}}],"limit":10,"offset":0,"total":1,"next":null}}`
 	for _, test := range []struct {
@@ -110,7 +131,7 @@ func executeSearchResponse(status int, body string, args ...string) (string, str
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	opener := func(context.Context, string, bool) (*session.Session, error) {
+	opener := func(context.Context, string, bool) (Session, error) {
 		opens++
 		return session.New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil), nil
 	}

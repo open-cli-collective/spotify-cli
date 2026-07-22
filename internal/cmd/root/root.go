@@ -30,21 +30,24 @@ import (
 
 // Dependencies contains the runtime effects used by the command tree.
 type Dependencies struct {
-	In             io.Reader
-	Out            io.Writer
-	ErrOut         io.Writer
-	Scope          statedir.Scope
-	Cache          statedir.Cache
-	Data           statedir.Data
-	OpenStore      credentials.Opener
-	Now            func() time.Time
-	Interactive    bool
-	Prompt         func(*initcmd.Setup) error
-	OpenBrowser    func(string) error
-	HTTPClient     *http.Client
-	OAuthEndpoints auth.Endpoints
-	APIBaseURL     string
-	SaveConfig     func(config.Config) error
+	In                     io.Reader
+	Out                    io.Writer
+	ErrOut                 io.Writer
+	Scope                  statedir.Scope
+	Cache                  statedir.Cache
+	Data                   statedir.Data
+	OpenConfigStore        configcmd.StoreOpener
+	OpenInitStore          initcmd.StoreOpener
+	OpenSessionStore       session.StoreOpener
+	OpenSetCredentialStore setcredential.StoreOpener
+	Now                    func() time.Time
+	Interactive            bool
+	Prompt                 func(*initcmd.Setup) error
+	OpenBrowser            func(string) error
+	HTTPClient             *http.Client
+	OAuthEndpoints         auth.Endpoints
+	APIBaseURL             string
+	SaveConfig             func(config.Config) error
 }
 
 // New constructs the top-level command from its runtime effects.
@@ -80,35 +83,52 @@ func New(deps Dependencies) *cobra.Command {
 		return exitcode.New(exitcode.Usage, err)
 	})
 	cmd.AddCommand(configcmd.New(configcmd.Dependencies{
-		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data, OpenStore: deps.OpenStore, Backend: &backend,
+		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data, OpenStore: deps.OpenConfigStore, Backend: &backend,
 	}))
 	cmd.AddCommand(setcredential.New(setcredential.Dependencies{
-		Scope: deps.Scope, OpenStore: deps.OpenStore, Backend: &backend, Now: deps.Now,
+		Scope: deps.Scope, OpenStore: deps.OpenSetCredentialStore, Backend: &backend, Now: deps.Now,
 	}))
 	authorizer := auth.Authorizer{
 		HTTPClient: deps.HTTPClient, Endpoints: deps.OAuthEndpoints, OpenBrowser: deps.OpenBrowser,
 	}
+	saveConfig := deps.SaveConfig
+	if saveConfig == nil {
+		saveConfig = func(value config.Config) error { return config.Save(deps.Scope, value) }
+	}
 	cmd.AddCommand(initcmd.New(initcmd.Dependencies{
-		Scope: deps.Scope, OpenStore: deps.OpenStore, Backend: &backend, Now: deps.Now,
-		Interactive: deps.Interactive, Prompt: deps.Prompt, Authorize: authorizer.Authorize,
-		Verify: func(ctx context.Context, _ config.Config, envelope token.Envelope) (client.User, error) {
-			oauthContext := ctx
-			if deps.HTTPClient != nil {
-				oauthContext = context.WithValue(ctx, oauth2.HTTPClient, deps.HTTPClient)
-			}
-			httpClient := oauth2.NewClient(oauthContext, oauth2.StaticTokenSource(&oauth2.Token{
-				AccessToken: envelope.AccessToken, TokenType: envelope.TokenType,
-				RefreshToken: envelope.RefreshToken, Expiry: envelope.ExpiresAt,
-			}))
-			return (client.Client{HTTPClient: httpClient, BaseURL: deps.APIBaseURL}).Me(ctx)
+		Scope: deps.Scope, Backend: &backend, Interactive: deps.Interactive, Prompt: deps.Prompt,
+		Initializer: initcmd.Initializer{
+			OpenStore: deps.OpenInitStore, Now: deps.Now, Authorize: authorizer.Authorize,
+			Verify: func(ctx context.Context, _ config.Config, envelope token.Envelope) (client.User, error) {
+				oauthContext := ctx
+				if deps.HTTPClient != nil {
+					oauthContext = context.WithValue(ctx, oauth2.HTTPClient, deps.HTTPClient)
+				}
+				httpClient := oauth2.NewClient(oauthContext, oauth2.StaticTokenSource(&oauth2.Token{
+					AccessToken: envelope.AccessToken, TokenType: envelope.TokenType,
+					RefreshToken: envelope.RefreshToken, Expiry: envelope.ExpiresAt,
+				}))
+				return (client.Client{HTTPClient: httpClient, BaseURL: deps.APIBaseURL}).Me(ctx)
+			},
+			SaveConfig: saveConfig,
 		},
-		SaveConfig: deps.SaveConfig,
 	}))
 	sessionOpener := session.Opener{
-		Scope: deps.Scope, OpenStore: deps.OpenStore, Now: deps.Now, HTTPClient: deps.HTTPClient,
+		Scope: deps.Scope, OpenStore: deps.OpenSessionStore,
+		Now: deps.Now, HTTPClient: deps.HTTPClient,
 		TokenURL: deps.OAuthEndpoints.TokenURL, APIBaseURL: deps.APIBaseURL,
 	}
-	cmd.AddCommand(mecmd.New(mecmd.Dependencies{OpenSession: sessionOpener.Open, Backend: &backend}))
-	cmd.AddCommand(searchcmd.New(searchcmd.Dependencies{OpenSession: sessionOpener.Open, Backend: &backend}))
+	cmd.AddCommand(mecmd.New(mecmd.Dependencies{
+		OpenSession: func(ctx context.Context, backend string, backendSet bool) (mecmd.Session, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		Backend: &backend,
+	}))
+	cmd.AddCommand(searchcmd.New(searchcmd.Dependencies{
+		OpenSession: func(ctx context.Context, backend string, backendSet bool) (searchcmd.Session, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		Backend: &backend,
+	}))
 	return cmd
 }

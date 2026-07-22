@@ -284,15 +284,17 @@ func (harness *meHarness) execute(args ...string) (string, error) {
 func (harness *meHarness) executeTo(stdout io.Writer, args ...string) error {
 	opener := session.Opener{
 		Scope: harness.scope,
-		OpenStore: func(credentials.OpenRequest) (credentials.Store, error) {
+		OpenStore: func(credentials.OpenRequest) (session.CredentialStore, error) {
 			return harness.store, nil
 		},
 		Now: func() time.Time { return harness.now }, HTTPClient: harness.httpClient,
 		TokenURL: harness.tokenURL, APIBaseURL: harness.apiBaseURL,
 	}
 	command := New(Dependencies{
-		OpenSession: opener.Open,
-		Backend:     &harness.backend,
+		OpenSession: func(ctx context.Context, backend string, backendSet bool) (Session, error) {
+			return opener.Open(ctx, backend, backendSet)
+		},
+		Backend: &harness.backend,
 	})
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})
@@ -311,9 +313,6 @@ type memoryStore struct {
 	overwrite bool
 }
 
-func (store *memoryStore) Backend() (credstore.Backend, credstore.Source) {
-	return credstore.BackendMemory, credstore.SourceExplicit
-}
 func (store *memoryStore) Close() error { return nil }
 func (store *memoryStore) Get(profile, key string) (string, error) {
 	value, ok := store.values[profile+"/"+key]
@@ -327,14 +326,6 @@ func (store *memoryStore) Set(profile, key, value string, opts ...credstore.SetO
 	store.overwrite = len(opts) > 0
 	store.values[profile+"/"+key] = value
 	return nil
-}
-func (store *memoryStore) Delete(profile, key string) error {
-	delete(store.values, profile+"/"+key)
-	return nil
-}
-func (store *memoryStore) Exists(profile, key string) (bool, error) {
-	_, ok := store.values[profile+"/"+key]
-	return ok, nil
 }
 
 type failingTransport struct{}

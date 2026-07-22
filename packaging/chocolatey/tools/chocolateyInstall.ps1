@@ -29,4 +29,3 @@ Install-ChocolateyZipPackage -PackageName $env:ChocolateyPackageName `
     -ChecksumType 'sha256'
 
 Write-Host "sptfy installed successfully. Run 'sptfy --help' to get started."
-

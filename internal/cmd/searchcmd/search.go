@@ -2,6 +2,7 @@
 package searchcmd
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -17,7 +18,6 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
-	"github.com/open-cli-collective/spotify-cli/internal/session"
 )
 
 const (
@@ -26,9 +26,18 @@ const (
 	maxOffset  = 1000
 )
 
+// Session is the authenticated capability required by track search.
+type Session interface {
+	Close() error
+	SearchTracks(context.Context, string, int, int) (client.TrackPage, error)
+}
+
+// SessionOpener opens the authenticated capability required by track search.
+type SessionOpener func(context.Context, string, bool) (Session, error)
+
 // Dependencies contains the authenticated effect used by search commands.
 type Dependencies struct {
-	OpenSession session.OpenFunc
+	OpenSession SessionOpener
 	Backend     *string
 }
 
@@ -108,7 +117,7 @@ func runTrack(command *cobra.Command, deps Dependencies, query string, options t
 		return exitcode.New(exitcode.Config, err)
 	}
 	defer func() { _ = authenticated.Close() }()
-	page, err := authenticated.Client.SearchTracks(command.Context(), query, options.max, offset)
+	page, err := authenticated.SearchTracks(command.Context(), query, options.max, offset)
 	if err != nil {
 		return classify(err)
 	}

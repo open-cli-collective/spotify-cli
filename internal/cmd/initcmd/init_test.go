@@ -162,6 +162,20 @@ func TestInitVerificationFailureWritesNothing(t *testing.T) {
 	}
 }
 
+func TestInitMissingConfigSaverWritesNothing(t *testing.T) {
+	harness := newInitHarness(t)
+	harness.saveConfig = nil
+	called := false
+	harness.authorize = func(context.Context, auth.Request) (token.Envelope, error) {
+		called = true
+		return harness.envelope(), nil
+	}
+	err := harness.execute("--client-id", "client-id", "--no-verify")
+	if exitcode.Code(err) != exitcode.Config || called || harness.store.setCalls != 0 {
+		t.Fatalf("error=%v authorize=%t setCalls=%d", err, called, harness.store.setCalls)
+	}
+}
+
 func TestInitClassifiesAuthorizationFailures(t *testing.T) {
 	tests := []struct {
 		err  error
@@ -319,13 +333,15 @@ func (harness *initHarness) envelope() token.Envelope {
 
 func (harness *initHarness) execute(args ...string) error {
 	command := New(Dependencies{
-		Scope: harness.scope,
-		OpenStore: func(request credentials.OpenRequest) (credentials.Store, error) {
-			harness.requests = append(harness.requests, request)
-			return harness.store, nil
+		Scope: harness.scope, Backend: &harness.backend, Interactive: harness.interactive, Prompt: harness.prompt,
+		Initializer: Initializer{
+			OpenStore: func(request credentials.OpenRequest) (CredentialStore, error) {
+				harness.requests = append(harness.requests, request)
+				return harness.store, nil
+			},
+			Now: func() time.Time { return harness.now }, Authorize: harness.authorize,
+			Verify: harness.verify, SaveConfig: harness.saveConfig,
 		},
-		Backend: &harness.backend, Now: func() time.Time { return harness.now }, Interactive: harness.interactive,
-		Prompt: harness.prompt, Authorize: harness.authorize, Verify: harness.verify, SaveConfig: harness.saveConfig,
 	})
 	command.SetIn(&bytes.Buffer{})
 	command.SetOut(&harness.stdout)
@@ -344,9 +360,6 @@ type initStore struct {
 	onSet     func()
 }
 
-func (*initStore) Backend() (credstore.Backend, credstore.Source) {
-	return credstore.BackendMemory, credstore.SourceExplicit
-}
 func (*initStore) Close() error { return nil }
 func (store *initStore) Get(profile, key string) (string, error) {
 	value, ok := store.values[profile+"/"+key]

@@ -10,7 +10,7 @@ LDFLAGS := -ldflags "-s -w \
 	-X github.com/open-cli-collective/spotify-cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/open-cli-collective/spotify-cli/internal/version.Date=$(DATE)"
 
-.PHONY: build test test-cover test-no1password test-static-smoke lint fmt tidy deps check install snapshot release clean
+.PHONY: build test test-cover test-no1password test-static-smoke test-live-smoke live-smoke lint fmt tidy deps check install snapshot package-render-check release clean
 
 build:
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sptfy
@@ -27,6 +27,13 @@ test-no1password:
 test-static-smoke:
 	CGO_ENABLED=0 go test ./internal/... ./cmd/... -count=1
 
+live-smoke:
+	./scripts/live-smoke.sh
+
+test-live-smoke:
+	./scripts/live-smoke-test.sh
+	go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^$$'
+
 lint:
 	golangci-lint run
 
@@ -41,13 +48,17 @@ deps:
 	go mod download
 	go mod verify
 
-check: tidy fmt lint test test-no1password test-static-smoke build
+check: tidy fmt lint test test-no1password test-static-smoke test-live-smoke build
 
 install:
 	go install ./cmd/sptfy
 
 snapshot:
 	goreleaser release --snapshot --clean --skip=publish
+	scripts/verify-package-render.sh
+
+package-render-check:
+	scripts/verify-package-render.sh
 
 release:
 ifneq ($(CONFIRM_RELEASE),1)

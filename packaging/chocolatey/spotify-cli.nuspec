@@ -27,4 +27,3 @@ Binary: sptfy.exe</description>
     <file src="tools\**" target="tools" />
   </files>
 </package>
-

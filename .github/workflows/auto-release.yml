@@ -1,0 +1,14 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  auto-release:
+    uses: open-cli-collective/.github/.github/workflows/auto-release.yml@v1
+    secrets:
+      tag-token: ${{ secrets.RELEASE_TAG_TOKEN }}

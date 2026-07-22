@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>spotify-cli</id>
+    <version>0.0.0</version>
+    <title>Spotify CLI</title>
+    <authors>Open CLI Collective</authors>
+    <owners>rianjs</owners>
+    <licenseUrl>https://github.com/open-cli-collective/spotify-cli/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/open-cli-collective/spotify-cli#readme</projectUrl>
+    <projectSourceUrl>https://github.com/open-cli-collective/spotify-cli</projectSourceUrl>
+    <packageSourceUrl>https://github.com/open-cli-collective/spotify-cli/tree/main/packaging/chocolatey</packageSourceUrl>
+    <bugTrackerUrl>https://github.com/open-cli-collective/spotify-cli/issues</bugTrackerUrl>
+    <copyright>Copyright (c) 2026 Open CLI Collective</copyright>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Spotify from the command line.
+
+sptfy uses Authorization Code with PKCE and stores OAuth credentials in the
+configured credential backend.
+
+Binary: sptfy.exe</description>
+    <summary>Spotify from the command line</summary>
+    <releaseNotes>https://github.com/open-cli-collective/spotify-cli/releases</releaseNotes>
+    <tags>spotify music cli</tags>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
+

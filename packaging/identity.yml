@@ -1,0 +1,34 @@
+schema: open-cli-identity/v1
+repo: spotify-cli
+module: github.com/open-cli-collective/spotify-cli
+binary: sptfy
+service_name: spotify-cli
+version_file: version.txt
+goreleaser_config: .goreleaser.yml
+tag:
+  prefix: v
+  version_scheme: major_minor_run_patch
+archives:
+  name_template: "sptfy_v{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+packages:
+  homebrew: { canonical_cask: spotify-cli }
+  winget: { id: OpenCLICollective.spotify-cli, bootstrap: true }
+  chocolatey: { id: spotify-cli }
+  linux: { package_name: spotify-cli }
+
+keychain_probe:
+  env_unset: [SPOTIFY_CLI_KEYRING_BACKEND]
+  seed_config:
+    base: native_user_config
+    path: spotify-cli/config.yml
+    content: |
+      redirect_uri: http://127.0.0.1/callback
+      credential_ref: spotify-cli/default
+  command: ["config", "show", "--json"]
+  output: json
+  assertions:
+    .backend: keychain
+    .backend_source: auto
+    .credential_ref: spotify-cli/default
+

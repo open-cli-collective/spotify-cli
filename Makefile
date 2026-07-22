@@ -10,7 +10,7 @@ LDFLAGS := -ldflags "-s -w \
 	-X github.com/open-cli-collective/spotify-cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/open-cli-collective/spotify-cli/internal/version.Date=$(DATE)"
 
-.PHONY: build test test-cover test-no1password test-static-smoke lint fmt tidy deps check install clean
+.PHONY: build test test-cover test-no1password test-static-smoke lint fmt tidy deps check install snapshot release clean
 
 build:
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sptfy
@@ -45,6 +45,17 @@ check: tidy fmt lint test test-no1password test-static-smoke build
 
 install:
 	go install ./cmd/sptfy
+
+snapshot:
+	goreleaser release --snapshot --clean --skip=publish
+
+release:
+ifneq ($(CONFIRM_RELEASE),1)
+	@echo "make release publishes a live release; this is CI-only." >&2
+	@echo "Re-run with CONFIRM_RELEASE=1 if you really mean to publish locally." >&2
+	@exit 1
+endif
+	goreleaser release --clean
 
 clean:
 	rm -rf bin/ dist/ coverage.out

@@ -2,6 +2,25 @@
 
 `sptfy` is a command-line interface for Spotify.
 
+## Install
+
+The executable is `sptfy`; package-manager listings use `spotify-cli`.
+
+```sh
+brew install --cask open-cli-collective/tap/spotify-cli
+winget install OpenCLICollective.spotify-cli
+choco install spotify-cli
+```
+
+After configuring the Open CLI Collective
+[APT or RPM repository](https://github.com/open-cli-collective/linux-packages#installation),
+install package `spotify-cli`; both formats provide `/usr/bin/sptfy`.
+
+```sh
+sudo apt install spotify-cli
+sudo dnf install spotify-cli
+```
+
 ## Setup
 
 Create a Spotify application and add this redirect URI in its dashboard:
@@ -33,6 +52,7 @@ Requires Go 1.26 or newer.
 
 ```sh
 make check
+make snapshot
 go run ./cmd/sptfy --help
 ```
 

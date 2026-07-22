@@ -12,14 +12,26 @@ concurrency:
 permissions:
   contents: read
 
+# Standard shipped tags: include 1Password backends and disable Passage.
+env:
+  GOFLAGS: -tags=keyring_nopassage
+
 jobs:
   build-platform:
     name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            cgo: "0"
+          - os: macos-latest
+            cgo: "1"
+          - os: windows-latest
+            cgo: "0"
     runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
     steps:
       - uses: actions/checkout@v4
       - uses: open-cli-collective/.github/actions/go-build@v1
@@ -41,11 +53,16 @@ jobs:
       - uses: open-cli-collective/.github/actions/go-test@v1
         with:
           go-version-file: go.mod
+          target: test-cover
+      - name: Test without 1Password support
+        run: make test-no1password
+      - name: Test static credential path
+        run: make test-static-smoke
+      - name: Check module tidiness
+        run: make tidy
 
   lint:
     runs-on: ubuntu-latest
-    env:
-      GOFLAGS: -tags=keyring_nopassage
     steps:
       - uses: actions/checkout@v4
       - uses: open-cli-collective/.github/actions/go-lint@v1

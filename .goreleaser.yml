@@ -1,0 +1,134 @@
+version: 2
+
+project_name: spotify-cli
+
+before:
+  hooks:
+    - make tidy
+    - make test
+
+builds:
+  - id: sptfy-darwin
+    main: ./cmd/sptfy
+    binary: sptfy
+    flags:
+      - -tags=keyring_nopassage
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        goamd64: v1
+        env:
+          - CGO_ENABLED=1
+          - "CC=xcrun clang -arch x86_64"
+      - goos: darwin
+        goarch: arm64
+        goarm64: v8.0
+        env:
+          - CGO_ENABLED=1
+          - "CC=xcrun clang -arch arm64"
+    ldflags:
+      - -s -w
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Version={{.Version}}
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Commit={{.Commit}}
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Date={{.Date}}
+    hooks:
+      post:
+        - cmd: bash -c 'f="${CODESIGN_DARWIN_SCRIPT:-}"; if [ -z "$f" ]; then echo "skip codesign (CODESIGN_DARWIN_SCRIPT unset, local build)"; exit 0; fi; [ -x "$f" ] || { echo "CODESIGN_DARWIN_SCRIPT not executable ($f)" >&2; exit 1; }; exec "$f" "$0" "$1"' "{{ .Path }}" "{{ .Os }}"
+  - id: sptfy-unix-win
+    main: ./cmd/sptfy
+    binary: sptfy
+    flags:
+      - -tags=keyring_nopassage
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Version={{.Version}}
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Commit={{.Commit}}
+      - -X github.com/open-cli-collective/spotify-cli/internal/version.Date={{.Date}}
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "sptfy_v{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+nfpms:
+  - id: spotify-cli
+    package_name: spotify-cli
+    vendor: Open CLI Collective
+    homepage: https://github.com/open-cli-collective/spotify-cli
+    maintainer: Open CLI Collective <open-cli-collective@users.noreply.github.com>
+    description: Spotify from the command line
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/spotify-cli/LICENSE
+
+homebrew_casks:
+  - name: spotify-cli
+    binaries: [sptfy]
+    skip_upload: true
+    repository:
+      owner: open-cli-collective
+      name: homebrew-tap
+    homepage: https://github.com/open-cli-collective/spotify-cli
+    description: Spotify from the command line
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sptfy"]
+    caveats: |
+      Create a Spotify application, then run:
+        sptfy init --client-id YOUR_CLIENT_ID
+
+      OAuth credentials are stored in the configured credential backend.
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  replace_existing_artifacts: true
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "Merge pull request"
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]+\))?!?:'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^fix(\([^)]+\))?!?:'
+      order: 1
+    - title: Other
+      order: 999

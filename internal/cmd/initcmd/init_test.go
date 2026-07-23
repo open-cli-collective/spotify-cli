@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,14 @@ func TestInteractiveInitPromptsVerifiesThenCommits(t *testing.T) {
 	}
 	if loaded.ClientID != "client-id" || loaded.Keyring.Backend != "file" {
 		t.Fatalf("saved config = %+v", loaded)
+	}
+	stored, err := token.Decode([]byte(harness.store.values["default/"+credentials.OAuthTokenKey]), harness.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantScopes := []string{auth.ScopeUserLibraryModify, auth.ScopeUserLibraryRead, auth.ScopeUserReadPrivate}
+	if !slices.Equal(stored.Scopes, wantScopes) {
+		t.Fatalf("stored scopes = %v, want %v", stored.Scopes, wantScopes)
 	}
 }
 
@@ -327,7 +336,8 @@ func newInitHarness(t *testing.T) *initHarness {
 func (harness *initHarness) envelope() token.Envelope {
 	return token.Envelope{
 		AccessToken: "access-secret", TokenType: "Bearer", RefreshToken: "refresh-secret",
-		ExpiresAt: harness.now.Add(time.Hour), Scopes: []string{auth.ScopeUserReadPrivate},
+		ExpiresAt: harness.now.Add(time.Hour),
+		Scopes:    []string{auth.ScopeUserReadPrivate, auth.ScopeUserLibraryModify, auth.ScopeUserLibraryRead},
 	}
 }
 

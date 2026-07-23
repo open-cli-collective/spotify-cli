@@ -173,6 +173,35 @@ func TestSearchCommandsRejectJSONBeforeSession(t *testing.T) {
 	}
 }
 
+func TestLibraryCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		verb string
+		args []string
+	}{
+		{verb: "list", args: []string{"library", "tracks", "list"}},
+		{verb: "check", args: []string{"library", "tracks", "check", id}},
+		{verb: "add", args: []string{"library", "tracks", "add", id}},
+		{verb: "remove", args: []string{"library", "tracks", "remove", id}},
+	} {
+		h := newHarness(t)
+		if test.verb != "list" {
+			if err := h.execute("library", "tracks", test.verb, id, "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+				t.Fatalf("verb=%s invalid error=%v code=%d store opens=%d", test.verb, err, exitcode.Code(err), len(h.requests))
+			}
+		}
+		cfg := config.Default()
+		cfg.ClientID = "client-id"
+		if err := config.Save(h.deps.Scope, cfg); err != nil {
+			t.Fatal(err)
+		}
+		err := h.execute(test.args...)
+		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+			t.Fatalf("verb=%s error=%v code=%d store opens=%d", test.verb, err, exitcode.Code(err), len(h.requests))
+		}
+	}
+}
+
 func TestCatalogGetCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
 	const id = "0123456789ABCDEFGHIJKL"
 	for _, resource := range []string{"tracks", "albums", "artists"} {

@@ -44,6 +44,25 @@ func TestTrackFieldPrecedenceAndArtwork(t *testing.T) {
 	}
 }
 
+func TestSavedTrackFieldPrecedence(t *testing.T) {
+	fields, err := SelectSavedTrackFields("", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ADDED_AT | ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION | URI | URL | DISC_NUMBER | TRACK_NUMBER | EXPLICIT | RESTRICTION | ARTWORK\n"
+	if got := RenderSavedTracks(nil, fields); got != want {
+		t.Fatalf("extended artwork = %q, want %q", got, want)
+	}
+
+	fields, err = SelectSavedTrackFields("track,added_at", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RenderSavedTracks(nil, fields); got != "TRACK | ADDED_AT\n" {
+		t.Fatalf("fields override = %q", got)
+	}
+}
+
 func intPointer(value int) *int { return &value }
 
 func TestTrackProjectionRejectsUnknownAndIDsHaveNoHeader(t *testing.T) {

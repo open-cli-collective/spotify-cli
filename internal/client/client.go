@@ -113,6 +113,21 @@ type TrackPage struct {
 	HasNext bool
 }
 
+// SavedTrack is one track and its library timestamp.
+type SavedTrack struct {
+	AddedAt string `json:"added_at"`
+	Track   Track  `json:"track"`
+}
+
+// SavedTrackPage is one validated saved-track page.
+type SavedTrackPage struct {
+	Items   []SavedTrack
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
 // AlbumPage is one validated Spotify album-search page.
 type AlbumPage struct {
 	Items   []Album
@@ -254,6 +269,99 @@ func (client Client) ListArtistAlbums(ctx context.Context, id string, limit, off
 	}, nil
 }
 
+type savedTrackPageResponse struct {
+	Items  *[]SavedTrack `json:"items"`
+	Limit  int           `json:"limit"`
+	Next   *string       `json:"next"`
+	Offset int           `json:"offset"`
+	Total  int           `json:"total"`
+}
+
+// ListSavedTracks returns one saved-track page without following provider pagination URLs.
+func (client Client) ListSavedTracks(ctx context.Context, limit, offset int) (SavedTrackPage, error) {
+	if limit < 1 || limit > 50 || offset < 0 {
+		return SavedTrackPage{}, ErrInvalidResponse
+	}
+	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response savedTrackPageResponse
+	if err := client.requestJSON(ctx, http.MethodGet, "/me/tracks?"+values.Encode(), &response); err != nil {
+		return SavedTrackPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return SavedTrackPage{}, ErrInvalidResponse
+	}
+	for _, item := range *response.Items {
+		if !spotifyref.ValidID(item.Track.ID) {
+			return SavedTrackPage{}, ErrInvalidResponse
+		}
+		if _, err := time.Parse(time.RFC3339, item.AddedAt); err != nil {
+			return SavedTrackPage{}, ErrInvalidResponse
+		}
+	}
+	return SavedTrackPage{
+		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
+	}, nil
+}
+
+// CheckSavedTracks reports saved membership in input order.
+func (client Client) CheckSavedTracks(ctx context.Context, uris []string) ([]bool, error) {
+	if !validTrackURIs(uris) {
+		return nil, ErrInvalidResponse
+	}
+	result := make([]bool, 0, len(uris))
+	for start := 0; start < len(uris); start += 40 {
+		end := min(start+40, len(uris))
+		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
+		var chunk []bool
+		if err := client.requestJSON(ctx, http.MethodGet, "/me/library/contains?"+values.Encode(), &chunk); err != nil {
+			return nil, err
+		}
+		if len(chunk) != end-start {
+			return nil, ErrInvalidResponse
+		}
+		result = append(result, chunk...)
+	}
+	return result, nil
+}
+
+// SaveSavedTracks adds tracks to the current user's library.
+func (client Client) SaveSavedTracks(ctx context.Context, uris []string) error {
+	return client.mutateSavedTracks(ctx, http.MethodPut, uris)
+}
+
+// RemoveSavedTracks removes tracks from the current user's library.
+func (client Client) RemoveSavedTracks(ctx context.Context, uris []string) error {
+	return client.mutateSavedTracks(ctx, http.MethodDelete, uris)
+}
+
+func (client Client) mutateSavedTracks(ctx context.Context, method string, uris []string) error {
+	if !validTrackURIs(uris) {
+		return ErrInvalidResponse
+	}
+	for start := 0; start < len(uris); start += 40 {
+		end := min(start+40, len(uris))
+		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
+		if err := client.requestJSON(ctx, method, "/me/library?"+values.Encode(), nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validTrackURIs(uris []string) bool {
+	if len(uris) == 0 {
+		return false
+	}
+	for _, uri := range uris {
+		if !strings.HasPrefix(uri, "spotify:track:") || !spotifyref.ValidID(strings.TrimPrefix(uri, "spotify:track:")) {
+			return false
+		}
+	}
+	return true
+}
+
 type trackSearchResponse struct {
 	Tracks *struct {
 		Items  *[]Track `json:"items"`
@@ -346,6 +454,10 @@ func (client Client) SearchArtists(ctx context.Context, query string, limit, off
 }
 
 func (client Client) getJSON(ctx context.Context, path string, target any) error {
+	return client.requestJSON(ctx, http.MethodGet, path, target)
+}
+
+func (client Client) requestJSON(ctx context.Context, method, path string, target any) error {
 	baseURL := strings.TrimRight(client.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = defaultAPIBaseURL
@@ -355,7 +467,7 @@ func (client Client) getJSON(ctx context.Context, path string, target any) error
 		httpClient = http.DefaultClient
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+		request, err := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
 		if err != nil {
 			return ErrUpstream
 		}
@@ -391,7 +503,10 @@ func (client Client) getJSON(ctx context.Context, path string, target any) error
 		}
 		body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
-		if err != nil || len(body) > maxResponseBytes || json.Unmarshal(body, target) != nil {
+		if err != nil || len(body) > maxResponseBytes {
+			return ErrInvalidResponse
+		}
+		if target != nil && json.Unmarshal(body, target) != nil {
 			return ErrInvalidResponse
 		}
 		return nil

@@ -20,7 +20,11 @@ import (
 )
 
 const (
-	// ScopeUserReadPrivate is the only scope requested by the initial CLI slice.
+	// ScopeUserLibraryModify permits saved-library mutations.
+	ScopeUserLibraryModify = "user-library-modify"
+	// ScopeUserLibraryRead permits saved-library reads.
+	ScopeUserLibraryRead = "user-library-read"
+	// ScopeUserReadPrivate permits current-user identity reads.
 	ScopeUserReadPrivate = "user-read-private"
 	defaultAuthorizeURL  = "https://accounts.spotify.com/authorize"
 	defaultTokenURL      = "https://accounts.spotify.com/api/token" // #nosec G101 -- fixed public OAuth endpoint, not a credential.
@@ -40,6 +44,10 @@ var (
 	// ErrExchange reports a failed authorization-code exchange.
 	ErrExchange = errors.New("exchanging Spotify authorization code failed")
 )
+
+func requestedScopes() []string {
+	return []string{ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
+}
 
 // Endpoints selects Spotify OAuth endpoints. Production uses the zero value.
 type Endpoints struct {
@@ -114,7 +122,7 @@ func (authorizer Authorizer) Authorize(ctx context.Context, request Request) (to
 	if err != nil {
 		return token.Envelope{}, ErrExchange
 	}
-	envelope, err := fromOAuthToken(value, []string{ScopeUserReadPrivate})
+	envelope, err := fromOAuthToken(value, config.Scopes)
 	if err != nil || envelope.RefreshToken == "" {
 		return token.Envelope{}, ErrExchange
 	}
@@ -131,7 +139,8 @@ func (authorizer Authorizer) oauthConfig(clientID, redirectURI string) oauth2.Co
 		tokenURL = defaultTokenURL
 	}
 	return oauth2.Config{
-		ClientID: clientID, RedirectURL: redirectURI, Scopes: []string{ScopeUserReadPrivate},
+		ClientID: clientID, RedirectURL: redirectURI,
+		Scopes:   requestedScopes(),
 		Endpoint: oauth2.Endpoint{AuthURL: authorizeURL, TokenURL: tokenURL, AuthStyle: oauth2.AuthStyleInParams},
 	}
 }

@@ -22,17 +22,22 @@ The currently implemented surface contains exactly these commands:
 - `sptfy artists get <id-or-reference>`
 - `sptfy albums tracks list <album-id-or-reference>`
 - `sptfy artists albums list <artist-id-or-reference>`
+- `sptfy library tracks list`
+- `sptfy library tracks check <track-reference>...`
+- `sptfy library tracks add <track-reference>...`
+- `sptfy library tracks remove <track-reference>...`
 
-The remaining catalog and library ideas under [Future roadmap](#future-roadmap)
+The remaining ideas under [Future roadmap](#future-roadmap)
 are directional and non-normative until promoted into the command sections.
 
 ## Authentication and configuration
 
 `sptfy` uses Spotify Authorization Code with PKCE for user authorization. The
 user supplies a Spotify client ID; the CLI never accepts or stores a client
-secret. The CLI currently requests only `user-read-private`; catalog reads do
-not require an additional scope. Later commands may require
-reauthorization for additional scopes.
+secret. The CLI requests exactly these sorted scopes: `user-library-modify`,
+`user-library-read`, and `user-read-private`. Catalog reads do not require an
+additional scope. A credential missing a command's library scope fails before
+its Spotify resource request with a `sptfy init --overwrite` hint.
 
 OAuth access and refresh material is stored only in a `cli-common/credstore`
 backend under the configured credential reference. It is never stored in the
@@ -266,6 +271,24 @@ adds `URI`, `URL`, `DISC_NUMBER`, `TRACK_NUMBER`, `EXPLICIT`, and
 default to 10 and allow `--max` values from 1 through 10; they reuse album
 fields, including optional artwork URL metadata.
 
+## Saved tracks
+
+`sptfy library tracks list` uses `GET /me/tracks`, defaults to 10, and accepts
+1–50 results. Its opaque continuation token is bound to `library-tracks`;
+provider response URLs are never followed. Normal output begins with
+`ADDED_AT` and the established track fields. `--id` is pure IDs, while
+`--fields`, `--extended`, and `--include-artwork` follow the standard
+precedence.
+
+`check`, `add`, and `remove` accept only raw 22-character track IDs, typed
+track URIs, or canonical track URLs. The full batch is validated, normalized,
+and deduplicated before authentication opens. The first reference and
+first-seen order are retained. Check uses `GET /me/library/contains`; add uses
+`PUT /me/library`; remove uses `DELETE /me/library`. Requests pass `uris` as a
+query parameter in chunks of at most 40. Check output is
+`REFERENCE | ID | SAVED`. Mutations emit only `added<TAB>N` or `removed<TAB>N`
+after every chunk succeeds; partial failure is reported without rollback.
+
 ## Request behavior
 
 - Requests use fixed Spotify account/API origins; continuation data never
@@ -341,6 +364,14 @@ fields, and wrong-relationship or wrong-parent tokens fail before network I/O.
 Fixture tests verify fixed relationship paths, page validation, inherited
 transport behavior, and that provider pagination URLs are never followed.
 
+### Saved tracks
+
+Exercise list bounds, empty pages, continuation, shape flags, accepted
+reference forms, first-seen deduplication, complete-batch validation, exact
+scope-guard timing and hints, and stdout/stderr routing. Provider tests cover
+fixed paths and methods, response validation, check-length mismatch, inherited
+transport behavior, and 40/41/80/81 chunks including later-chunk failure.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -351,10 +382,7 @@ normal Spotify configuration or OS keychain.
 The following ideas preserve product direction but are not commitments for the
 initial release:
 
-- List, check, add, and remove saved tracks and albums.
-- Validate and deduplicate complete mutation batches before making changes.
-- Chunk generic Spotify library requests at the upstream maximum while
-  preserving input/result association.
+- List, check, add, and remove saved albums.
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the

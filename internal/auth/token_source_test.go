@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
@@ -101,6 +103,19 @@ func TestTokenSourceRejectsExplicitlyEmptyScope(t *testing.T) {
 	})
 	if _, err := source.Token(); !errors.Is(err, ErrRefresh) || persisted {
 		t.Fatalf("error = %v, persisted = %t", err, persisted)
+	}
+}
+
+func TestOAuthTokenUsesExactFallbackScopes(t *testing.T) {
+	envelope, err := fromOAuthToken(&oauth2.Token{
+		AccessToken: "access", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
+	}, requestedScopes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"user-library-modify", "user-library-read", "user-read-private"}
+	if !slices.Equal(envelope.Scopes, want) {
+		t.Fatalf("scopes=%v want=%v", envelope.Scopes, want)
 	}
 }
 

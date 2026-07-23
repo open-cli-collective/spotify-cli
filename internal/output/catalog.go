@@ -152,14 +152,13 @@ type ArtistField string
 const (
 	ArtistID      ArtistField = "ID"
 	ArtistName    ArtistField = "ARTIST"
-	ArtistGenres  ArtistField = "GENRES"
 	ArtistURI     ArtistField = "URI"
 	ArtistURL     ArtistField = "URL"
 	ArtistArtwork ArtistField = "ARTWORK"
 )
 
 var (
-	defaultArtistFields  = []ArtistField{ArtistID, ArtistName, ArtistGenres}
+	defaultArtistFields  = []ArtistField{ArtistID, ArtistName}
 	extendedArtistFields = []ArtistField{ArtistURI, ArtistURL}
 	allArtistFields      = append(append(append([]ArtistField(nil), defaultArtistFields...), extendedArtistFields...), ArtistArtwork)
 )
@@ -235,8 +234,6 @@ func artistCell(artist client.Artist, field ArtistField) string {
 		return cell(artist.ID)
 	case ArtistName:
 		return cell(artist.Name)
-	case ArtistGenres:
-		return cell(strings.Join(artist.Genres, ","))
 	case ArtistURI:
 		return cell(artist.URI)
 	case ArtistURL:
@@ -246,6 +243,62 @@ func artistCell(artist client.Artist, field ArtistField) string {
 	default:
 		return "-"
 	}
+}
+
+// RenderAlbum renders one album as an identity header and paired attributes.
+func RenderAlbum(album client.Album, fields []AlbumField) string {
+	attributes := make([]detailAttribute, 0, len(fields))
+	for _, field := range fields {
+		if field != AlbumID && field != AlbumName {
+			attributes = append(attributes, detailAttribute{key: detailKey(string(field)), value: albumCell(album, field)})
+		}
+	}
+	return renderDetail(album.ID, album.Name, attributes)
+}
+
+// RenderArtist renders one artist as an identity header and paired attributes.
+func RenderArtist(artist client.Artist, fields []ArtistField) string {
+	attributes := make([]detailAttribute, 0, len(fields))
+	for _, field := range fields {
+		if field != ArtistID && field != ArtistName {
+			attributes = append(attributes, detailAttribute{key: detailKey(string(field)), value: artistCell(artist, field)})
+		}
+	}
+	return renderDetail(artist.ID, artist.Name, attributes)
+}
+
+type detailAttribute struct {
+	key   string
+	value string
+}
+
+func renderDetail(id, name string, attributes []detailAttribute) string {
+	var rendered strings.Builder
+	_, _ = fmt.Fprintf(&rendered, "%s  %s\n", cell(id), cell(name))
+	for index := 0; index < len(attributes); index += 2 {
+		_, _ = fmt.Fprintf(&rendered, "%s: %s", attributes[index].key, attributes[index].value)
+		if index+1 < len(attributes) {
+			_, _ = fmt.Fprintf(&rendered, "   %s: %s", attributes[index+1].key, attributes[index+1].value)
+		}
+		rendered.WriteByte('\n')
+	}
+	return rendered.String()
+}
+
+func detailKey(field string) string {
+	words := strings.Split(field, "_")
+	for index, word := range words {
+		switch word {
+		case "ID", "IDS", "URI", "URL":
+			if word == "IDS" {
+				words[index] = "IDs"
+			}
+		default:
+			word = strings.ToLower(word)
+			words[index] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func validArtistField(field ArtistField) bool {

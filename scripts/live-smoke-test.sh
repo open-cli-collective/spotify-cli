@@ -59,11 +59,20 @@ elif [[ $args == *" search artist "* ]]; then
   elif [[ $args == *" --fields "* ]]; then
     printf 'ARTIST | ARTWORK\nBjörk | 320x320 https://image\n'
   elif [[ $args == *" --extended "* ]]; then
-    printf 'ID | ARTIST | GENRES | URI | URL\n'
-    printf 'artist-1 | Björk | art pop | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n'
+    printf 'ID | ARTIST | URI | URL\n'
+    printf 'artist-1 | Björk | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n'
   else
-    printf 'ID | ARTIST | GENRES\nartist-1 | Björk | art pop\n'
+    printf 'ID | ARTIST\nartist-1 | Björk\n'
   fi
+elif [[ $args == *" tracks get "* ]]; then
+  [[ $args == *" tracks get 11dFghVXANMlKmJXsNCbNl --id "* ]] || exit 9
+  printf '11dFghVXANMlKmJXsNCbNl\n'
+elif [[ $args == *" albums get "* ]]; then
+  [[ $args == *" albums get spotify:album:4aawyAB9vmqN3uQ7FjRGTy --id "* ]] || exit 10
+  printf '4aawyAB9vmqN3uQ7FjRGTy\n'
+elif [[ $args == *" artists get "* ]]; then
+  [[ $args == *" artists get https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg --id "* ]] || exit 11
+  printf '0TnOYISbd1XYRBk9myaseg\n'
 fi
 FAKE
 chmod +x "$fake"

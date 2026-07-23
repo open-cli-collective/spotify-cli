@@ -17,6 +17,9 @@ The currently implemented surface contains exactly these commands:
 - `sptfy search track <query>`
 - `sptfy search album <query>`
 - `sptfy search artist <query>`
+- `sptfy tracks get <id-or-reference>`
+- `sptfy albums get <id-or-reference>`
+- `sptfy artists get <id-or-reference>`
 
 The remaining catalog and library ideas under [Future roadmap](#future-roadmap)
 are directional and non-normative until promoted into the command sections.
@@ -25,8 +28,8 @@ are directional and non-normative until promoted into the command sections.
 
 `sptfy` uses Spotify Authorization Code with PKCE for user authorization. The
 user supplies a Spotify client ID; the CLI never accepts or stores a client
-secret. The CLI currently requests only `user-read-private`; catalog search
-does not require an additional scope. Later commands may require
+secret. The CLI currently requests only `user-read-private`; catalog reads do
+not require an additional scope. Later commands may require
 reauthorization for additional scopes.
 
 OAuth access and refresh material is stored only in a `cli-common/credstore`
@@ -209,11 +212,37 @@ output shape rules. Its continuation tokens are bound to artist search.
 Default output:
 
 ```text
-ID | ARTIST | GENRES
+ID | ARTIST
 ```
 
 `--extended` adds `URI` and `URL`. `--include-artwork` adds `ARTWORK`.
 Popularity and follower data are not requested or rendered.
+
+## Catalog get
+
+### `sptfy tracks get <id-or-reference>`
+
+### `sptfy albums get <id-or-reference>`
+
+### `sptfy artists get <id-or-reference>`
+
+Each command accepts exactly one 22-character ASCII alphanumeric Spotify ID,
+matching `spotify:<kind>:<id>` URI, or canonical
+`https://open.spotify.com/<kind>/<id>` URL. Other URL origins, userinfo, ports,
+query strings, fragments, wrong resource kinds, and additional path components
+are rejected before authentication is opened.
+
+The commands perform one fixed-origin request for the named resource and never
+follow the supplied URL. Output is text-only and starts with the stable
+`ID  Name` identity header. Remaining attributes use `Key: Value` pairs
+separated by three spaces. Track output includes album and artist relationship
+IDs; album output includes artist IDs.
+
+`--id` emits only the fetched resource ID and overrides the other shape flags.
+`--extended`, `--fields`, and `--include-artwork` follow the shared output
+rules. `--fields` replaces attributes below the identity header; selected
+identity fields are not duplicated. Artwork is URL and dimensions metadata
+only and is never downloaded.
 
 ## Request behavior
 
@@ -271,6 +300,15 @@ different search resource fail before network I/O. Fixture tests verify fixed
 origin requests, response validation, and that Spotify pagination URLs are
 never followed.
 
+### Catalog get
+
+Exercise raw ID, Spotify URI, and canonical Spotify URL references across
+tracks, albums, and artists. Cover exact default, ID-only, selected-field,
+extended, artwork, breadcrumb, and sanitized output. Malformed, wrong-kind,
+and hostile URL references must fail before credential or network access.
+Fixture tests verify exactly one fixed-origin single-resource request plus
+inherited authorization, retry, cancellation, and bounded-body behavior.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -281,7 +319,6 @@ normal Spotify configuration or OS keychain.
 The following ideas preserve product direction but are not commitments for the
 initial release:
 
-- Resolve Spotify IDs, URIs, and URLs for track, album, and artist metadata.
 - Traverse album → tracks and artist → albums.
 - List, check, add, and remove saved tracks and albums.
 - Validate and deduplicate complete mutation batches before making changes.

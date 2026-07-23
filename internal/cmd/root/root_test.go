@@ -173,6 +173,33 @@ func TestSearchCommandsRejectJSONBeforeSession(t *testing.T) {
 	}
 }
 
+func TestCatalogGetCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, resource := range []string{"tracks", "albums", "artists"} {
+		h := newHarness(t)
+		if err := h.execute(resource, "get", "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+			t.Fatalf("resource=%s invalid error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
+		}
+
+		h = newHarness(t)
+		cfg := config.Default()
+		cfg.ClientID = "client-id"
+		if err := config.Save(h.deps.Scope, cfg); err != nil {
+			t.Fatal(err)
+		}
+		err := h.execute(resource, "get", id)
+		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
+		}
+
+		h = newHarness(t)
+		err = h.execute(resource, "get", id, "--json")
+		if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+			t.Fatalf("resource=%s JSON error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
+		}
+	}
+}
+
 func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Now = func() time.Time { return time.Now().UTC() }

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/open-cli-collective/spotify-cli/internal/spotifyref"
 )
 
 const (
@@ -50,7 +52,6 @@ type User struct {
 type Artist struct {
 	ID           string       `json:"id"`
 	Name         string       `json:"name"`
-	Genres       []string     `json:"genres"`
 	URI          string       `json:"uri"`
 	ExternalURLs ExternalURLs `json:"external_urls"`
 	Images       []Image      `json:"images"`
@@ -140,6 +141,51 @@ func (client Client) Me(ctx context.Context) (User, error) {
 		return User{}, ErrInvalidResponse
 	}
 	return user, nil
+}
+
+// GetTrack returns one track by ID.
+func (client Client) GetTrack(ctx context.Context, id string) (Track, error) {
+	var track Track
+	if !spotifyref.ValidID(id) {
+		return Track{}, ErrInvalidResponse
+	}
+	if err := client.getJSON(ctx, "/tracks/"+id, &track); err != nil {
+		return Track{}, err
+	}
+	if strings.TrimSpace(track.ID) == "" {
+		return Track{}, ErrInvalidResponse
+	}
+	return track, nil
+}
+
+// GetAlbum returns one album by ID.
+func (client Client) GetAlbum(ctx context.Context, id string) (Album, error) {
+	var album Album
+	if !spotifyref.ValidID(id) {
+		return Album{}, ErrInvalidResponse
+	}
+	if err := client.getJSON(ctx, "/albums/"+id, &album); err != nil {
+		return Album{}, err
+	}
+	if strings.TrimSpace(album.ID) == "" {
+		return Album{}, ErrInvalidResponse
+	}
+	return album, nil
+}
+
+// GetArtist returns one artist by ID.
+func (client Client) GetArtist(ctx context.Context, id string) (Artist, error) {
+	var artist Artist
+	if !spotifyref.ValidID(id) {
+		return Artist{}, ErrInvalidResponse
+	}
+	if err := client.getJSON(ctx, "/artists/"+id, &artist); err != nil {
+		return Artist{}, err
+	}
+	if strings.TrimSpace(artist.ID) == "" {
+		return Artist{}, ErrInvalidResponse
+	}
+	return artist, nil
 }
 
 type trackSearchResponse struct {

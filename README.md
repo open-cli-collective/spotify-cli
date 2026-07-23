@@ -71,7 +71,7 @@ sptfy search artist 'Björk' --max 10
 ```text
 ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION
 ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS
-ID | ARTIST | GENRES
+ID | ARTIST
 ```
 
 Spotify development-mode search is limited to 10 results per page. When more
@@ -83,6 +83,28 @@ dimensions and URLs. Resource search intentionally has no JSON mode.
 
 To keep every result on one line, carriage returns, newlines, and the reserved
 ` | ` separator sequence inside Spotify text are replaced with one space.
+
+## Catalog
+
+Get one track, album, or artist from a raw Spotify ID, matching Spotify URI, or
+canonical `open.spotify.com` URL:
+
+```sh
+sptfy tracks get 11dFghVXANMlKmJXsNCbNl
+sptfy albums get spotify:album:4aawyAB9vmqN3uQ7FjRGTy
+sptfy artists get https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg
+```
+
+```text
+11dFghVXANMlKmJXsNCbNl  Cut To The Feeling
+Artist IDs: 6sFIWsNpZYqfjUpaCgueju   Artists: Carly Rae Jepsen
+Album ID: 0tGPJ0bkWOUmH7MEOR77qc   Album: Cut To The Feeling
+Duration: 3:27
+```
+
+Catalog reads are text-only. `--id` emits only the fetched ID and overrides
+`--extended`, `--fields`, and `--include-artwork`. Selected identity fields
+remain in the stable identity header instead of being duplicated below it.
 
 ## Development
 
@@ -112,8 +134,9 @@ make live-smoke
 ```
 
 The harness is interactive because Spotify authorization opens a browser. It
-exercises setup, identity, refresh, search/pagination shapes, replacement,
-clear, and re-initialization without exporting the stored OAuth credential.
+exercises setup, identity, refresh, search/pagination shapes, catalog gets,
+replacement, clear, and re-initialization without exporting the stored OAuth
+credential.
 
 ## License
 

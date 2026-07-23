@@ -119,6 +119,28 @@ func TestSessionDelegatesCatalogSearch(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesCatalogGet(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	var paths []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		paths = append(paths, request.URL.Path)
+		return response(http.StatusOK, `{"id":"`+id+`"}`), nil
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	if _, err := authenticated.GetTrack(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticated.GetAlbum(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticated.GetArtist(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(paths, ",") != "/v1/tracks/"+id+",/v1/albums/"+id+",/v1/artists/"+id {
+		t.Fatalf("paths = %v", paths)
+	}
+}
+
 func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
 	t.Helper()
 	statedirtest.Hermetic(t)

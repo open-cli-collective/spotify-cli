@@ -47,7 +47,7 @@ func TestRenderAlbumsShapes(t *testing.T) {
 
 func TestRenderArtistsShapes(t *testing.T) {
 	artist := client.Artist{
-		ID: "artist-1", Name: "Björk | live\ncut", Genres: []string{"art pop", "electronic"}, URI: "spotify:artist:artist-1",
+		ID: "artist-1", Name: "Björk | live\ncut", URI: "spotify:artist:artist-1",
 		ExternalURLs: client.ExternalURLs{Spotify: "https://open.spotify.com/artist/artist-1"}, Images: []client.Image{{URL: "https://image", Width: nil, Height: intPointer(320)}},
 	}
 	tests := []struct {
@@ -57,10 +57,10 @@ func TestRenderArtistsShapes(t *testing.T) {
 		artwork  bool
 		want     string
 	}{
-		{name: "default", want: "ID | ARTIST | GENRES\nartist-1 | Björk live cut | art pop,electronic\n"},
+		{name: "default", want: "ID | ARTIST\nartist-1 | Björk live cut\n"},
 		{name: "fields and artwork", csv: "artist,artwork", want: "ARTIST | ARTWORK\nBjörk live cut | -x320 https://image\n"},
-		{name: "extended", extended: true, want: "ID | ARTIST | GENRES | URI | URL\nartist-1 | Björk live cut | art pop,electronic | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
-		{name: "include artwork", artwork: true, want: "ID | ARTIST | GENRES | ARTWORK\nartist-1 | Björk live cut | art pop,electronic | -x320 https://image\n"},
+		{name: "extended", extended: true, want: "ID | ARTIST | URI | URL\nartist-1 | Björk live cut | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
+		{name: "include artwork", artwork: true, want: "ID | ARTIST | ARTWORK\nartist-1 | Björk live cut | -x320 https://image\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,5 +78,69 @@ func TestRenderArtistsShapes(t *testing.T) {
 	}
 	if _, err := SelectArtistFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ID, ARTIST") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRenderCatalogDetails(t *testing.T) {
+	track := client.Track{
+		ID: "track-1", Name: "Song | live\ncut", DurationMS: 123000,
+		Artists: []client.Artist{{ID: "artist-1", Name: "Björk"}},
+		Album:   client.Album{ID: "album-1", Name: "Debut", Images: []client.Image{{URL: "https://image", Width: intPointer(640), Height: intPointer(640)}}},
+		URI:     "spotify:track:track-1", ExternalURLs: client.ExternalURLs{Spotify: "https://open.spotify.com/track/track-1"},
+		DiscNumber: 1, TrackNumber: 2, Explicit: true,
+	}
+	album := track.Album
+	album.Artists = track.Artists
+	album.Name = "Debut | live\ncut"
+	album.ReleaseDate = "1993"
+	album.ReleaseDatePrecision = "year"
+	album.TotalTracks = 12
+	album.AlbumType = "album"
+	album.URI = "spotify:album:album-1"
+	album.ExternalURLs = client.ExternalURLs{Spotify: "https://open.spotify.com/album/album-1"}
+	artist := track.Artists[0]
+	artist.Name = "Björk | live\ncut"
+	artist.URI = "spotify:artist:artist-1"
+	artist.ExternalURLs = client.ExternalURLs{Spotify: "https://open.spotify.com/artist/artist-1"}
+	artist.Images = []client.Image{{URL: "https://artist-image", Width: intPointer(320), Height: intPointer(320)}}
+
+	trackFields, _ := SelectTrackFields("", false, false)
+	if got, want := RenderTrack(track, trackFields), "track-1  Song live cut\nArtist IDs: artist-1   Artists: Björk\nAlbum ID: album-1   Album: Debut\nDuration: 2:03\n"; got != want {
+		t.Fatalf("track detail=%q want=%q", got, want)
+	}
+	albumFields, _ := SelectAlbumFields("", false, false)
+	if got, want := RenderAlbum(album, albumFields), "album-1  Debut live cut\nArtist IDs: artist-1   Artists: Björk\nRelease Date: 1993   Total Tracks: 12\n"; got != want {
+		t.Fatalf("album detail=%q want=%q", got, want)
+	}
+	artistFields, _ := SelectArtistFields("", false, false)
+	if got, want := RenderArtist(artist, artistFields), "artist-1  Björk live cut\n"; got != want {
+		t.Fatalf("artist detail=%q want=%q", got, want)
+	}
+
+	fields, _ := SelectTrackFields("id,track,uri,artwork", false, false)
+	if got, want := RenderTrack(track, fields), "track-1  Song live cut\nURI: spotify:track:track-1   Artwork: 640x640 https://image\n"; got != want {
+		t.Fatalf("selected detail=%q want=%q", got, want)
+	}
+	fields, _ = SelectTrackFields("", true, true)
+	want := "track-1  Song live cut\n" +
+		"Artist IDs: artist-1   Artists: Björk\n" +
+		"Album ID: album-1   Album: Debut\n" +
+		"Duration: 2:03   URI: spotify:track:track-1\n" +
+		"URL: https://open.spotify.com/track/track-1   Disc Number: 1\n" +
+		"Track Number: 2   Explicit: true\n" +
+		"Restriction: -   Artwork: 640x640 https://image\n"
+	if got := RenderTrack(track, fields); got != want {
+		t.Fatalf("extended detail=%q want=%q", got, want)
+	}
+	albumFields, _ = SelectAlbumFields("album,uri,artwork", true, false)
+	if got, want := RenderAlbum(album, albumFields), "album-1  Debut live cut\nURI: spotify:album:album-1   Artwork: 640x640 https://image\n"; got != want {
+		t.Fatalf("selected album detail=%q want=%q", got, want)
+	}
+	artistFields, _ = SelectArtistFields("", true, true)
+	want = "artist-1  Björk live cut\n" +
+		"URI: spotify:artist:artist-1   URL: https://open.spotify.com/artist/artist-1\n" +
+		"Artwork: 320x320 https://artist-image\n"
+	if got := RenderArtist(artist, artistFields); got != want {
+		t.Fatalf("extended artist detail=%q want=%q", got, want)
 	}
 }

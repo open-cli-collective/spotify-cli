@@ -171,6 +171,8 @@ func TestCatalogSearchRejectsMalformedPages(t *testing.T) {
 		{name: "wrong limit", page: `{"items":[],"limit":2,"offset":0,"total":0}`},
 		{name: "negative total", page: `{"items":[],"limit":1,"offset":0,"total":-1}`},
 		{name: "too many items", page: `{"items":[{},{}],"limit":1,"offset":0,"total":2}`},
+		{name: "missing item ID", page: `{"items":[{}],"limit":1,"offset":0,"total":1}`},
+		{name: "whitespace item ID", page: `{"items":[{"id":" \t\n"}],"limit":1,"offset":0,"total":1}`},
 	} {
 		for _, surface := range []string{"albums", "artists"} {
 			t.Run(surface+" "+malformed.name, func(t *testing.T) {

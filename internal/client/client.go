@@ -190,6 +190,11 @@ func (client Client) SearchAlbums(ctx context.Context, query string, limit, offs
 		response.Albums.Items == nil || response.Albums.Total < 0 || len(*response.Albums.Items) > limit {
 		return AlbumPage{}, ErrInvalidResponse
 	}
+	for _, album := range *response.Albums.Items {
+		if strings.TrimSpace(album.ID) == "" {
+			return AlbumPage{}, ErrInvalidResponse
+		}
+	}
 	return AlbumPage{
 		Items: *response.Albums.Items, Offset: response.Albums.Offset, Limit: response.Albums.Limit,
 		Total: response.Albums.Total, HasNext: response.Albums.Next != nil && *response.Albums.Next != "",
@@ -216,6 +221,11 @@ func (client Client) SearchArtists(ctx context.Context, query string, limit, off
 	if response.Artists == nil || response.Artists.Offset != offset || response.Artists.Limit != limit ||
 		response.Artists.Items == nil || response.Artists.Total < 0 || len(*response.Artists.Items) > limit {
 		return ArtistPage{}, ErrInvalidResponse
+	}
+	for _, artist := range *response.Artists.Items {
+		if strings.TrimSpace(artist.ID) == "" {
+			return ArtistPage{}, ErrInvalidResponse
+		}
 	}
 	return ArtistPage{
 		Items: *response.Artists.Items, Offset: response.Artists.Offset, Limit: response.Artists.Limit,

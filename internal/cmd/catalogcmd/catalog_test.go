@@ -3,16 +3,21 @@ package catalogcmd
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
+	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
 )
 
 type fakeSession struct {
-	calls []string
+	calls     []string
+	childName string
+	hasNext   bool
+	empty     bool
 }
 
 func (session *fakeSession) Close() error { return nil }
@@ -38,6 +43,43 @@ func (session *fakeSession) GetArtist(_ context.Context, id string) (client.Arti
 		ID: id, Name: "Artist", URI: "spotify:artist:" + id,
 		ExternalURLs: client.ExternalURLs{Spotify: "https://open.spotify.com/artist/" + id},
 		Images:       []client.Image{{URL: "https://artist-image"}},
+	}, nil
+}
+func (session *fakeSession) ListAlbumTracks(_ context.Context, id string, limit, offset int) (client.TrackPage, error) {
+	session.calls = append(session.calls, "album-tracks:"+id+":"+strconv.Itoa(limit)+":"+strconv.Itoa(offset))
+	if session.empty {
+		return client.TrackPage{Limit: limit, Offset: offset}, nil
+	}
+	name := "Song"
+	if session.childName != "" {
+		name = session.childName
+	}
+	return client.TrackPage{
+		Items: []client.Track{{
+			ID: "track-1", Name: name, Artists: []client.Artist{{ID: "artist-1", Name: "Artist"}},
+			DurationMS: 61000, URI: "spotify:track:track-1",
+			ExternalURLs: client.ExternalURLs{Spotify: "https://open.spotify.com/track/track-1"},
+			DiscNumber:   2, TrackNumber: 3, Explicit: true, Restrictions: client.Restriction{Reason: "market"},
+		}},
+		Limit: limit, Offset: offset, Total: offset + 1, HasNext: session.hasNext,
+	}, nil
+}
+func (session *fakeSession) ListArtistAlbums(_ context.Context, id string, limit, offset int) (client.AlbumPage, error) {
+	session.calls = append(session.calls, "artist-albums:"+id+":"+strconv.Itoa(limit)+":"+strconv.Itoa(offset))
+	if session.empty {
+		return client.AlbumPage{Limit: limit, Offset: offset}, nil
+	}
+	name := "Album"
+	if session.childName != "" {
+		name = session.childName
+	}
+	return client.AlbumPage{
+		Items: []client.Album{{
+			ID: "album-1", Name: name, Artists: []client.Artist{{ID: "artist-1", Name: "Artist"}},
+			ReleaseDate: "2026", TotalTracks: 10, URI: "spotify:album:album-1",
+			Images: []client.Image{{URL: "https://album-image"}},
+		}},
+		Limit: limit, Offset: offset, Total: offset + 1, HasNext: session.hasNext,
 	}, nil
 }
 
@@ -152,9 +194,169 @@ func TestCatalogGetHelp(t *testing.T) {
 	}
 }
 
+func TestCatalogTraversalExactOutputAndAcceptedReferences(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		group, relation, kind, parent, want string
+	}{
+		{
+			group: "albums", relation: "tracks", kind: "album", parent: "Album",
+			want: "Album ID: " + id + "\nID | TRACK | ARTIST_IDS | ARTISTS | DURATION\ntrack-1 | Song | artist-1 | Artist | 1:01\n",
+		},
+		{
+			group: "artists", relation: "albums", kind: "artist", parent: "Artist",
+			want: "Artist ID: " + id + "\nID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\nalbum-1 | Album | artist-1 | Artist | 2026 | 10\n",
+		},
+	} {
+		for _, reference := range []string{id, "spotify:" + test.kind + ":" + id, "https://open.spotify.com/" + test.kind + "/" + id} {
+			stdout, stderr, opens, session, err := execute(test.group, test.relation, "list", reference)
+			wantCall := test.kind + "-" + test.relation + ":" + id + ":10:0"
+			if err != nil || stdout != test.want || stderr != "" || opens != 1 || len(session.calls) != 1 || session.calls[0] != wantCall {
+				t.Fatalf("%s %q stdout=%q stderr=%q opens=%d calls=%v error=%v", test.parent, reference, stdout, stderr, opens, session.calls, err)
+			}
+		}
+	}
+}
+
+func TestCatalogTraversalOutputShapes(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"albums", "tracks", "list", id, "--id", "--fields", "invalid", "--extended"}, want: "track-1\n"},
+		{args: []string{"albums", "tracks", "list", id, "--fields", "track,artist_ids"}, want: "Album ID: " + id + "\nTRACK | ARTIST_IDS\nSong | artist-1\n"},
+		{args: []string{"albums", "tracks", "list", id, "--extended"}, want: "Album ID: " + id + "\nID | TRACK | ARTIST_IDS | ARTISTS | DURATION | URI | URL | DISC_NUMBER | TRACK_NUMBER | EXPLICIT | RESTRICTION\ntrack-1 | Song | artist-1 | Artist | 1:01 | spotify:track:track-1 | https://open.spotify.com/track/track-1 | 2 | 3 | true | market\n"},
+		{args: []string{"artists", "albums", "list", id, "--id", "--fields", "invalid", "--include-artwork"}, want: "album-1\n"},
+		{args: []string{"artists", "albums", "list", id, "--fields", "album,artwork"}, want: "Artist ID: " + id + "\nALBUM | ARTWORK\nAlbum | -x- https://album-image\n"},
+		{args: []string{"artists", "albums", "list", id, "--include-artwork"}, want: "Artist ID: " + id + "\nID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS | ARTWORK\nalbum-1 | Album | artist-1 | Artist | 2026 | 10 | -x- https://album-image\n"},
+	} {
+		stdout, stderr, _, _, err := execute(test.args...)
+		if err != nil || stdout != test.want || stderr != "" {
+			t.Fatalf("args=%v stdout=%q stderr=%q error=%v", test.args, stdout, stderr, err)
+		}
+	}
+}
+
+func TestCatalogTraversalSanitizesChildNames(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"albums", "tracks", "list", id, "--fields", "track"}, want: "Album ID: " + id + "\nTRACK\nBjörk Live Cut\n"},
+		{args: []string{"artists", "albums", "list", id, "--fields", "album"}, want: "Artist ID: " + id + "\nALBUM\nBjörk Live Cut\n"},
+	} {
+		stdout, stderr, _, _, err := executeWithSession(&fakeSession{childName: "Björk | Live\nCut"}, test.args...)
+		if err != nil || stdout != test.want || stderr != "" {
+			t.Fatalf("args=%v stdout=%q stderr=%q error=%v", test.args, stdout, stderr, err)
+		}
+	}
+}
+
+func TestCatalogTraversalEmptyPagesKeepParentAndTableHeaders(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"albums", "tracks", "list", id}, want: "Album ID: " + id + "\nID | TRACK | ARTIST_IDS | ARTISTS | DURATION\n"},
+		{args: []string{"artists", "albums", "list", id}, want: "Artist ID: " + id + "\nID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n"},
+	} {
+		stdout, stderr, _, _, err := executeWithSession(&fakeSession{empty: true}, test.args...)
+		if err != nil || stdout != test.want || stderr != "" {
+			t.Fatalf("args=%v stdout=%q stderr=%q error=%v", test.args, stdout, stderr, err)
+		}
+	}
+}
+
+func TestCatalogTraversalPaginationIsParentBoundAndUsesStderr(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		args              []string
+		scope, call, want string
+	}{
+		{
+			args: []string{"albums", "tracks", "list", id}, scope: "album-tracks:" + id,
+			call: "album-tracks:" + id + ":10:10",
+			want: "Album ID: " + id + "\nID | TRACK | ARTIST_IDS | ARTISTS | DURATION\ntrack-1 | Song | artist-1 | Artist | 1:01\n",
+		},
+		{
+			args: []string{"artists", "albums", "list", id}, scope: "artist-albums:" + id,
+			call: "artist-albums:" + id + ":10:10",
+			want: "Artist ID: " + id + "\nID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\nalbum-1 | Album | artist-1 | Artist | 2026 | 10\n",
+		},
+	} {
+		authenticated := &fakeSession{hasNext: true}
+		token := pagetoken.Encode(test.scope, 10)
+		args := append(test.args, "--next-page-token", token)
+		stdout, stderr, opens, session, err := executeWithSession(authenticated, args...)
+		wantErr := "More results available (next: " + pagetoken.Encode(test.scope, 20) + ")\n"
+		if err != nil || stdout != test.want || stderr != wantErr || opens != 1 ||
+			len(session.calls) != 1 || session.calls[0] != test.call {
+			t.Fatalf("args=%v stdout=%q stderr=%q opens=%d calls=%v error=%v", args, stdout, stderr, opens, session.calls, err)
+		}
+	}
+}
+
+func TestCatalogTraversalValidatesBeforeSession(t *testing.T) {
+	const (
+		id      = "0123456789ABCDEFGHIJKL"
+		otherID = "abcdefghijklmnopqrstuv"
+	)
+	for _, args := range [][]string{
+		{"albums", "tracks", "list", "bad"},
+		{"albums", "tracks", "list", id, "--max", "0"},
+		{"albums", "tracks", "list", id, "--max", "51"},
+		{"artists", "albums", "list", id, "--max", "0"},
+		{"artists", "albums", "list", id, "--max", "11"},
+		{"albums", "tracks", "list", id, "--fields", "album"},
+		{"albums", "tracks", "list", id, "--fields", "artwork"},
+		{"albums", "tracks", "list", id, "--next-page-token", "invalid"},
+		{"albums", "tracks", "list", id, "--next-page-token", pagetoken.Encode("artist-albums:"+id, 10)},
+		{"albums", "tracks", "list", id, "--next-page-token", pagetoken.Encode("album-tracks:"+otherID, 10)},
+		{"artists", "albums", "list", id, "--next-page-token", pagetoken.Encode("artist-albums:"+otherID, 10)},
+	} {
+		_, _, opens, _, err := execute(args...)
+		if exitcode.Code(err) != exitcode.Usage || opens != 0 {
+			t.Fatalf("args=%v error=%v code=%d opens=%d", args, err, exitcode.Code(err), opens)
+		}
+	}
+	_, _, opens, _, err := execute("albums", "tracks", "list", id, "--include-artwork")
+	if err == nil || opens != 0 {
+		t.Fatalf("unavailable artwork flag error=%v opens=%d", err, opens)
+	}
+	for _, test := range []struct {
+		args []string
+		call string
+	}{
+		{args: []string{"albums", "tracks", "list", id, "--max", "50"}, call: "album-tracks:" + id + ":50:0"},
+		{args: []string{"artists", "albums", "list", id, "--max", "10"}, call: "artist-albums:" + id + ":10:0"},
+	} {
+		_, _, opens, session, err := execute(test.args...)
+		if err != nil || opens != 1 || len(session.calls) != 1 || session.calls[0] != test.call {
+			t.Fatalf("args=%v opens=%d calls=%v error=%v", test.args, opens, session.calls, err)
+		}
+	}
+}
+
+func TestCatalogTraversalHelpDoesNotOpenSessionOrAdvertiseUnavailableFields(t *testing.T) {
+	stdout, stderr, opens, _, err := execute("albums", "tracks", "list", "--help")
+	if err != nil || stderr != "" || opens != 0 || bytes.Contains([]byte(stdout), []byte("include-artwork")) {
+		t.Fatalf("stdout=%q stderr=%q opens=%d error=%v", stdout, stderr, opens, err)
+	}
+	stdout, stderr, opens, _, err = execute("artists", "albums", "list", "--help")
+	if err != nil || stderr != "" || opens != 0 || !bytes.Contains([]byte(stdout), []byte("include-artwork")) {
+		t.Fatalf("stdout=%q stderr=%q opens=%d error=%v", stdout, stderr, opens, err)
+	}
+}
+
 func execute(args ...string) (string, string, int, *fakeSession, error) {
+	return executeWithSession(&fakeSession{}, args...)
+}
+
+func executeWithSession(authenticated *fakeSession, args ...string) (string, string, int, *fakeSession, error) {
 	opens := 0
-	authenticated := &fakeSession{}
 	command := &cobra.Command{Use: "sptfy"}
 	command.AddCommand(New(Dependencies{OpenSession: func(context.Context, string, bool) (Session, error) {
 		opens++

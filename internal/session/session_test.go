@@ -141,6 +141,26 @@ func TestSessionDelegatesCatalogGet(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesCatalogTraversal(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	var paths []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		paths = append(paths, request.URL.RequestURI())
+		return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	if _, err := authenticated.ListAlbumTracks(context.Background(), id, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticated.ListArtistAlbums(context.Background(), id, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	want := "/v1/albums/" + id + "/tracks?limit=1&offset=0,/v1/artists/" + id + "/albums?limit=1&offset=0"
+	if strings.Join(paths, ",") != want {
+		t.Fatalf("paths=%v", paths)
+	}
+}
+
 func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
 	t.Helper()
 	statedirtest.Hermetic(t)

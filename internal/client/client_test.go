@@ -194,6 +194,127 @@ func TestCatalogGetInheritsBoundedTransportBehavior(t *testing.T) {
 	}
 }
 
+func TestCatalogTraversalUsesExactPathsAndDecodesPages(t *testing.T) {
+	const (
+		albumID  = "0123456789ABCDEFGHIJKL"
+		artistID = "abcdefghijklmnopqrstuv"
+	)
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		query := request.URL.Query()
+		switch request.URL.Path {
+		case "/v1/albums/" + albumID + "/tracks":
+			if request.Method != http.MethodGet || query.Get("limit") != "50" || query.Get("offset") != "50" || len(query) != 2 {
+				t.Fatalf("album tracks request=%s %s", request.Method, request.URL.RequestURI())
+			}
+			return response(http.StatusOK, `{"items":[{"id":"track-1","name":"First","artists":[{"id":"artist-1","name":"One"},{"id":"artist-2","name":"Two"}],"disc_number":1,"track_number":1},{"id":"track-2","name":"Second","artists":[{"id":"artist-2","name":"Two"}],"disc_number":2,"track_number":1}],"limit":50,"offset":50,"total":52,"next":"https://evil.invalid/follow-me"}`), nil
+		case "/v1/artists/" + artistID + "/albums":
+			if request.Method != http.MethodGet || query.Get("limit") != "10" || query.Get("offset") != "10" || len(query) != 2 {
+				t.Fatalf("artist albums request=%s %s", request.Method, request.URL.RequestURI())
+			}
+			return response(http.StatusOK, `{"items":[{"id":"album-1","name":"Album","artists":[{"id":"artist-1","name":"One"},{"id":"artist-2","name":"Two"}],"images":[{"url":"https://image","width":640,"height":640}]}],"limit":10,"offset":10,"total":11,"next":"https://evil.invalid/follow-me"}`), nil
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+			return nil, nil
+		}
+	})}
+	spotify := Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}
+	tracks, err := spotify.ListAlbumTracks(context.Background(), albumID, 50, 50)
+	if err != nil || len(tracks.Items) != 2 || tracks.Items[0].Artists[1].ID != "artist-2" ||
+		tracks.Items[1].DiscNumber != 2 || !tracks.HasNext {
+		t.Fatalf("tracks=%+v error=%v", tracks, err)
+	}
+	albums, err := spotify.ListArtistAlbums(context.Background(), artistID, 10, 10)
+	if err != nil || len(albums.Items) != 1 || albums.Items[0].Artists[1].Name != "Two" ||
+		albums.Items[0].Images[0].URL != "https://image" || !albums.HasNext || calls != 2 {
+		t.Fatalf("albums=%+v calls=%d error=%v", albums, calls, err)
+	}
+}
+
+func TestCatalogTraversalRejectsInvalidInputsAndPages(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return response(http.StatusOK, `{}`), nil
+	})}
+	spotify := Client{HTTPClient: httpClient}
+	for _, call := range []func() error{
+		func() error { _, err := spotify.ListAlbumTracks(context.Background(), "bad", 10, 0); return err },
+		func() error { _, err := spotify.ListAlbumTracks(context.Background(), id, 51, 0); return err },
+		func() error { _, err := spotify.ListAlbumTracks(context.Background(), id, 10, -1); return err },
+		func() error { _, err := spotify.ListArtistAlbums(context.Background(), id, 11, 0); return err },
+	} {
+		if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
+			t.Fatalf("error=%v calls=%d", err, calls)
+		}
+	}
+
+	for _, page := range []string{
+		`{}`,
+		`{"items":null,"limit":1,"offset":0,"total":0}`,
+		`{"items":[],"limit":2,"offset":0,"total":0}`,
+		`{"items":[],"limit":1,"offset":1,"total":0}`,
+		`{"items":[],"limit":1,"offset":0,"total":-1}`,
+		`{"items":[{},{}],"limit":1,"offset":0,"total":2}`,
+		`{"items":[{"id":" "}],"limit":1,"offset":0,"total":1}`,
+	} {
+		httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, page), nil
+		})
+		if _, err := spotify.ListAlbumTracks(context.Background(), id, 1, 0); !errors.Is(err, ErrInvalidResponse) {
+			t.Fatalf("page=%s error=%v", page, err)
+		}
+		if _, err := spotify.ListArtistAlbums(context.Background(), id, 1, 0); !errors.Is(err, ErrInvalidResponse) {
+			t.Fatalf("page=%s error=%v", page, err)
+		}
+	}
+}
+
+func TestCatalogTraversalInheritsTransportBehavior(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		status int
+		want   error
+	}{
+		{http.StatusUnauthorized, ErrUnauthorized},
+		{http.StatusForbidden, ErrForbidden},
+	} {
+		httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(test.status, "secret-canary"), nil
+		})}
+		_, err := (Client{HTTPClient: httpClient}).ListArtistAlbums(context.Background(), id, 1, 0)
+		if !errors.Is(err, test.want) || strings.Contains(err.Error(), "canary") {
+			t.Fatalf("status=%d error=%v", test.status, err)
+		}
+	}
+
+	calls := 0
+	spotify := Client{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return response(http.StatusServiceUnavailable, ""), nil
+			}
+			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
+		})},
+		Wait: func(context.Context, time.Duration) error { return nil },
+	}
+	if _, err := spotify.ListAlbumTracks(context.Background(), id, 1, 0); err != nil || calls != 2 {
+		t.Fatalf("retry error=%v calls=%d", err, calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	spotify.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, request.Context().Err()
+	})}
+	if _, err := spotify.ListAlbumTracks(ctx, id, 1, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+}
+
 func TestSearchTracksEncodesQueryAndDecodesBreadcrumbs(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1/search" {

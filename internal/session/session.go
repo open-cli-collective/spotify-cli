@@ -73,6 +73,16 @@ func (session *Session) GetArtist(ctx context.Context, id string) (client.Artist
 	return session.client.GetArtist(ctx, id)
 }
 
+// ListAlbumTracks lists tracks with the authenticated Spotify client.
+func (session *Session) ListAlbumTracks(ctx context.Context, id string, limit, offset int) (client.TrackPage, error) {
+	return session.client.ListAlbumTracks(ctx, id, limit, offset)
+}
+
+// ListArtistAlbums lists albums with the authenticated Spotify client.
+func (session *Session) ListArtistAlbums(ctx context.Context, id string, limit, offset int) (client.AlbumPage, error) {
+	return session.client.ListArtistAlbums(ctx, id, limit, offset)
+}
+
 // SearchTracks searches tracks with the authenticated Spotify client.
 func (session *Session) SearchTracks(ctx context.Context, query string, limit, offset int) (client.TrackPage, error) {
 	return session.client.SearchTracks(ctx, query, limit, offset)

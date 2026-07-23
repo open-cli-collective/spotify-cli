@@ -4,7 +4,9 @@ package catalogcmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 
 	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/spf13/cobra"
@@ -14,8 +16,11 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
+	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
 	"github.com/open-cli-collective/spotify-cli/internal/spotifyref"
 )
+
+const defaultMax = 10
 
 // Session is the authenticated capability required by catalog commands.
 type Session interface {
@@ -23,6 +28,8 @@ type Session interface {
 	GetTrack(context.Context, string) (client.Track, error)
 	GetAlbum(context.Context, string) (client.Album, error)
 	GetArtist(context.Context, string) (client.Artist, error)
+	ListAlbumTracks(context.Context, string, int, int) (client.TrackPage, error)
+	ListArtistAlbums(context.Context, string, int, int) (client.AlbumPage, error)
 }
 
 // SessionOpener opens the authenticated capability required by catalog commands.
@@ -41,16 +48,25 @@ type options struct {
 	artwork  bool
 }
 
+type listOptions struct {
+	max           int
+	nextPageToken string
+	id            bool
+	fields        string
+	extended      bool
+	artwork       bool
+}
+
 // New constructs the three catalog command groups.
 func New(deps Dependencies) []*cobra.Command {
 	return []*cobra.Command{
 		newGroup("tracks", "track", newTrack(deps)),
-		newGroup("albums", "album", newAlbum(deps)),
-		newGroup("artists", "artist", newArtist(deps)),
+		newGroup("albums", "album", newAlbum(deps), relationshipGroup("tracks", newAlbumTracks(deps))),
+		newGroup("artists", "artist", newArtist(deps), relationshipGroup("albums", newArtistAlbums(deps))),
 	}
 }
 
-func newGroup(use, alias string, child *cobra.Command) *cobra.Command {
+func newGroup(use, alias string, children ...*cobra.Command) *cobra.Command {
 	command := &cobra.Command{
 		Use: use, Aliases: []string{alias}, Short: "Read Spotify " + use,
 		Args: func(_ *cobra.Command, args []string) error {
@@ -59,6 +75,15 @@ func newGroup(use, alias string, child *cobra.Command) *cobra.Command {
 			}
 			return nil
 		},
+		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
+	}
+	command.AddCommand(children...)
+	return command
+}
+
+func relationshipGroup(use string, child *cobra.Command) *cobra.Command {
+	command := &cobra.Command{
+		Use: use, Short: "Traverse Spotify " + use, Args: noArgs(use),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(child)
@@ -159,6 +184,119 @@ func newArtist(deps Dependencies) *cobra.Command {
 	})
 }
 
+func newAlbumTracks(deps Dependencies) *cobra.Command {
+	var opts listOptions
+	return listCommand("album tracks", "track", 50, false, &opts, func(command *cobra.Command, reference string) error {
+		id, err := spotifyref.Parse(reference, spotifyref.Album)
+		if err != nil {
+			return exitcode.New(exitcode.Usage, err)
+		}
+		if opts.max < 1 || opts.max > 50 {
+			return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
+		}
+		var fields []output.TrackField
+		if !opts.id {
+			fields, err = output.SelectAlbumTrackFields(opts.fields, opts.extended)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+		}
+		scope := "album-tracks:" + id
+		offset, err := decodeTraversalToken(scope, opts.nextPageToken, 50)
+		if err != nil {
+			return err
+		}
+		authenticated, err := openSession(command, deps)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = authenticated.Close() }()
+		page, err := authenticated.ListAlbumTracks(command.Context(), id, opts.max, offset)
+		if err != nil {
+			return classify(err)
+		}
+		rendered := output.RenderTracks(page.Items, fields)
+		if opts.id {
+			rendered = output.RenderTrackIDs(page.Items)
+		} else {
+			rendered = "Album ID: " + id + "\n" + rendered
+		}
+		return writeListOutput(command, rendered, scope, page.Offset, page.Limit, page.HasNext)
+	})
+}
+
+func newArtistAlbums(deps Dependencies) *cobra.Command {
+	var opts listOptions
+	return listCommand("artist albums", "album", 10, true, &opts, func(command *cobra.Command, reference string) error {
+		id, err := spotifyref.Parse(reference, spotifyref.Artist)
+		if err != nil {
+			return exitcode.New(exitcode.Usage, err)
+		}
+		if opts.max < 1 || opts.max > 10 {
+			return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 10"))
+		}
+		var fields []output.AlbumField
+		if !opts.id {
+			fields, err = output.SelectAlbumFields(opts.fields, opts.extended, opts.artwork)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+		}
+		scope := "artist-albums:" + id
+		offset, err := decodeTraversalToken(scope, opts.nextPageToken, 10)
+		if err != nil {
+			return err
+		}
+		authenticated, err := openSession(command, deps)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = authenticated.Close() }()
+		page, err := authenticated.ListArtistAlbums(command.Context(), id, opts.max, offset)
+		if err != nil {
+			return classify(err)
+		}
+		rendered := output.RenderAlbums(page.Items, fields)
+		if opts.id {
+			rendered = output.RenderAlbumIDs(page.Items)
+		} else {
+			rendered = "Artist ID: " + id + "\n" + rendered
+		}
+		return writeListOutput(command, rendered, scope, page.Offset, page.Limit, page.HasNext)
+	})
+}
+
+func listCommand(parent, resource string, maxResults int, artwork bool, opts *listOptions, run func(*cobra.Command, string) error) *cobra.Command {
+	command := &cobra.Command{
+		Use: "list <spotify-id-uri-or-url>", Short: "List Spotify " + parent,
+		Args: func(command *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(command, args); err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			return nil
+		},
+		RunE: func(command *cobra.Command, args []string) error { return run(command, args[0]) },
+	}
+	flags := command.Flags()
+	flags.IntVarP(&opts.max, "max", "m", defaultMax, fmt.Sprintf("Maximum results (1-%d)", maxResults))
+	flags.StringVar(&opts.nextPageToken, "next-page-token", "", "Opaque continuation token")
+	flags.BoolVar(&opts.id, "id", false, "Emit only "+resource+" IDs")
+	flags.StringVar(&opts.fields, "fields", "", "Comma-separated output fields")
+	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent "+resource+" fields")
+	if artwork {
+		flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
+	}
+	return command
+}
+
+func decodeTraversalToken(scope, value string, pageLimit int) (int, error) {
+	offset, err := pagetoken.Decode(scope, value, math.MaxInt-pageLimit)
+	if err != nil {
+		return 0, exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
+	}
+	return offset, nil
+}
+
 func getCommand(resource string, opts *options, run func(*cobra.Command, string) error) *cobra.Command {
 	command := &cobra.Command{
 		Use: "get <spotify-id-uri-or-url>", Short: "Get one Spotify " + resource,
@@ -213,4 +351,25 @@ func writeOutput(command *cobra.Command, rendered string) error {
 		return exitcode.New(exitcode.Generic, errors.New("writing catalog output failed"))
 	}
 	return nil
+}
+
+func writeListOutput(command *cobra.Command, rendered, scope string, offset, limit int, hasNext bool) error {
+	if err := writeOutput(command, rendered); err != nil {
+		return err
+	}
+	if hasNext {
+		if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(scope, offset+limit)); err != nil {
+			return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
+		}
+	}
+	return nil
+}
+
+func noArgs(use string) func(*cobra.Command, []string) error {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) != 0 {
+			return exitcode.New(exitcode.Usage, errors.New(use+" takes no arguments"))
+		}
+		return nil
+	}
 }

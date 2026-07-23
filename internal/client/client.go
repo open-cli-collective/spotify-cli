@@ -188,6 +188,72 @@ func (client Client) GetArtist(ctx context.Context, id string) (Artist, error) {
 	return artist, nil
 }
 
+type trackPageResponse struct {
+	Items  *[]Track `json:"items"`
+	Limit  int      `json:"limit"`
+	Next   *string  `json:"next"`
+	Offset int      `json:"offset"`
+	Total  int      `json:"total"`
+}
+
+// ListAlbumTracks returns one album-track page without following provider pagination URLs.
+func (client Client) ListAlbumTracks(ctx context.Context, id string, limit, offset int) (TrackPage, error) {
+	if !spotifyref.ValidID(id) || limit < 1 || limit > 50 || offset < 0 {
+		return TrackPage{}, ErrInvalidResponse
+	}
+	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response trackPageResponse
+	if err := client.getJSON(ctx, "/albums/"+id+"/tracks?"+values.Encode(), &response); err != nil {
+		return TrackPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return TrackPage{}, ErrInvalidResponse
+	}
+	for _, track := range *response.Items {
+		if strings.TrimSpace(track.ID) == "" {
+			return TrackPage{}, ErrInvalidResponse
+		}
+	}
+	return TrackPage{
+		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
+	}, nil
+}
+
+type albumPageResponse struct {
+	Items  *[]Album `json:"items"`
+	Limit  int      `json:"limit"`
+	Next   *string  `json:"next"`
+	Offset int      `json:"offset"`
+	Total  int      `json:"total"`
+}
+
+// ListArtistAlbums returns one artist-album page without following provider pagination URLs.
+func (client Client) ListArtistAlbums(ctx context.Context, id string, limit, offset int) (AlbumPage, error) {
+	if !spotifyref.ValidID(id) || limit < 1 || limit > 10 || offset < 0 {
+		return AlbumPage{}, ErrInvalidResponse
+	}
+	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response albumPageResponse
+	if err := client.getJSON(ctx, "/artists/"+id+"/albums?"+values.Encode(), &response); err != nil {
+		return AlbumPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return AlbumPage{}, ErrInvalidResponse
+	}
+	for _, album := range *response.Items {
+		if strings.TrimSpace(album.ID) == "" {
+			return AlbumPage{}, ErrInvalidResponse
+		}
+	}
+	return AlbumPage{
+		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
+	}, nil
+}
+
 type trackSearchResponse struct {
 	Tracks *struct {
 		Items  *[]Track `json:"items"`

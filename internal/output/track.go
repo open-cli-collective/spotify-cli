@@ -30,9 +30,11 @@ const (
 )
 
 var (
-	defaultTrackFields  = []TrackField{TrackID, TrackName, TrackArtistIDs, TrackArtists, TrackAlbumID, TrackAlbum, TrackDuration}
-	extendedTrackFields = []TrackField{TrackURI, TrackURL, TrackDiscNumber, TrackTrackNumber, TrackExplicit, TrackRestriction}
-	allTrackFields      = append(append(append([]TrackField(nil), defaultTrackFields...), extendedTrackFields...), TrackArtwork)
+	defaultTrackFields      = []TrackField{TrackID, TrackName, TrackArtistIDs, TrackArtists, TrackAlbumID, TrackAlbum, TrackDuration}
+	defaultAlbumTrackFields = []TrackField{TrackID, TrackName, TrackArtistIDs, TrackArtists, TrackDuration}
+	extendedTrackFields     = []TrackField{TrackURI, TrackURL, TrackDiscNumber, TrackTrackNumber, TrackExplicit, TrackRestriction}
+	allTrackFields          = append(append(append([]TrackField(nil), defaultTrackFields...), extendedTrackFields...), TrackArtwork)
+	allAlbumTrackFields     = append(append([]TrackField(nil), defaultAlbumTrackFields...), extendedTrackFields...)
 )
 
 // SelectTrackFields applies the family-wide default, widening, then override precedence.
@@ -44,11 +46,23 @@ func SelectTrackFields(csv string, extended, artwork bool) ([]TrackField, error)
 	if artwork {
 		fields = append(fields, TrackArtwork)
 	}
-	if strings.TrimSpace(csv) == "" {
-		return fields, nil
+	return selectTrackFields(csv, fields, allTrackFields)
+}
+
+// SelectAlbumTrackFields selects only fields present in simplified album-track responses.
+func SelectAlbumTrackFields(csv string, extended bool) ([]TrackField, error) {
+	fields := append([]TrackField(nil), defaultAlbumTrackFields...)
+	if extended {
+		fields = append(fields, extendedTrackFields...)
 	}
-	defaults := fields
-	fields = nil
+	return selectTrackFields(csv, fields, allAlbumTrackFields)
+}
+
+func selectTrackFields(csv string, defaults, allowed []TrackField) ([]TrackField, error) {
+	if strings.TrimSpace(csv) == "" {
+		return defaults, nil
+	}
+	var fields []TrackField
 	seen := map[TrackField]bool{}
 	for _, raw := range strings.Split(csv, ",") {
 		trimmed := strings.TrimSpace(raw)
@@ -56,8 +70,8 @@ func SelectTrackFields(csv string, extended, artwork bool) ([]TrackField, error)
 			continue
 		}
 		name := TrackField(strings.ToUpper(trimmed))
-		if !validTrackField(name) {
-			return nil, fmt.Errorf("unknown track field %q; valid fields: %s", trimmed, trackFieldNames())
+		if !validTrackField(name, allowed) {
+			return nil, fmt.Errorf("unknown track field %q; valid fields: %s", trimmed, trackFieldNames(allowed))
 		}
 		if !seen[name] {
 			fields = append(fields, name)
@@ -192,8 +206,8 @@ func sanitize(value string) string {
 	return strings.ReplaceAll(value, " | ", " ")
 }
 
-func validTrackField(field TrackField) bool {
-	for _, candidate := range allTrackFields {
+func validTrackField(field TrackField, allowed []TrackField) bool {
+	for _, candidate := range allowed {
 		if candidate == field {
 			return true
 		}
@@ -201,9 +215,9 @@ func validTrackField(field TrackField) bool {
 	return false
 }
 
-func trackFieldNames() string {
-	values := make([]string, len(allTrackFields))
-	for index, field := range allTrackFields {
+func trackFieldNames(allowed []TrackField) string {
+	values := make([]string, len(allowed))
+	for index, field := range allowed {
 		values[index] = string(field)
 	}
 	return strings.Join(values, ", ")

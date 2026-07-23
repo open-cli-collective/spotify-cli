@@ -200,6 +200,34 @@ func TestCatalogGetCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
 	}
 }
 
+func TestCatalogTraversalCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, args := range [][]string{
+		{"albums", "tracks", "list", id, "--max", "51"},
+		{"artists", "albums", "list", id, "--max", "11"},
+	} {
+		h := newHarness(t)
+		if err := h.execute(args...); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+			t.Fatalf("args=%v error=%v code=%d store opens=%d", args, err, exitcode.Code(err), len(h.requests))
+		}
+	}
+	for _, args := range [][]string{
+		{"albums", "tracks", "list", id},
+		{"artists", "albums", "list", id},
+	} {
+		h := newHarness(t)
+		cfg := config.Default()
+		cfg.ClientID = "client-id"
+		if err := config.Save(h.deps.Scope, cfg); err != nil {
+			t.Fatal(err)
+		}
+		err := h.execute(args...)
+		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+			t.Fatalf("args=%v error=%v code=%d store opens=%d", args, err, exitcode.Code(err), len(h.requests))
+		}
+	}
+}
+
 func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Now = func() time.Time { return time.Now().UTC() }
@@ -228,6 +256,16 @@ func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(writer, `{"tracks":{"items":[{"id":"track-1","name":"Song","artists":[{"id":"artist-1","name":"Ada"}],"album":{"id":"album-1","name":"Album"},"duration_ms":61000}],"limit":10,"offset":0,"total":1,"next":null}}`)
+		case "/v1/albums/0123456789ABCDEFGHIJKL/tracks":
+			if request.Header.Get("Authorization") != "Bearer access-token-canary" || request.URL.Query().Get("limit") != "10" {
+				t.Errorf("album tracks authorization/query = %q %v", request.Header.Get("Authorization"), request.URL.Query())
+			}
+			_, _ = io.WriteString(writer, `{"items":[{"id":"track-1","name":"Song","artists":[{"id":"artist-1","name":"Ada"}],"duration_ms":61000}],"limit":10,"offset":0,"total":1,"next":null}`)
+		case "/v1/artists/0123456789ABCDEFGHIJKL/albums":
+			if request.Header.Get("Authorization") != "Bearer access-token-canary" || request.URL.Query().Get("limit") != "10" {
+				t.Errorf("artist albums authorization/query = %q %v", request.Header.Get("Authorization"), request.URL.Query())
+			}
+			_, _ = io.WriteString(writer, `{"items":[{"id":"album-1","name":"Album","artists":[{"id":"artist-1","name":"Ada"}],"release_date":"2026","total_tracks":1}],"limit":10,"offset":0,"total":1,"next":null}`)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -305,6 +343,24 @@ func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	wantSearch := "ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\ntrack-1 | Song | artist-1 | Ada | album-1 | Album | 1:01\n"
 	if h.out.String() != wantSearch || h.errOut.Len() != 0 {
 		t.Fatalf("search stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+
+	h.out.Reset()
+	if err := h.execute("albums", "tracks", "list", "spotify:album:0123456789ABCDEFGHIJKL"); err != nil {
+		t.Fatal(err)
+	}
+	wantTracks := "Album ID: 0123456789ABCDEFGHIJKL\nID | TRACK | ARTIST_IDS | ARTISTS | DURATION\ntrack-1 | Song | artist-1 | Ada | 1:01\n"
+	if h.out.String() != wantTracks || h.errOut.Len() != 0 {
+		t.Fatalf("album tracks stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+
+	h.out.Reset()
+	if err := h.execute("artists", "albums", "list", "https://open.spotify.com/artist/0123456789ABCDEFGHIJKL"); err != nil {
+		t.Fatal(err)
+	}
+	wantAlbums := "Artist ID: 0123456789ABCDEFGHIJKL\nID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\nalbum-1 | Album | artist-1 | Ada | 2026 | 1\n"
+	if h.out.String() != wantAlbums || h.errOut.Len() != 0 {
+		t.Fatalf("artist albums stdout=%q stderr=%q", h.out.String(), h.errOut.String())
 	}
 }
 

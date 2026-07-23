@@ -58,3 +58,25 @@ func TestTrackProjectionRejectsUnknownAndIDsHaveNoHeader(t *testing.T) {
 		t.Fatalf("empty table = %q", got)
 	}
 }
+
+func TestAlbumTrackFieldsExcludeUnavailableAlbumAndArtworkMetadata(t *testing.T) {
+	fields, err := SelectAlbumTrackFields("", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RenderTracks(nil, fields); got != "ID | TRACK | ARTIST_IDS | ARTISTS | DURATION\n" {
+		t.Fatalf("default=%q", got)
+	}
+	fields, err = SelectAlbumTrackFields("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RenderTracks(nil, fields); got != "ID | TRACK | ARTIST_IDS | ARTISTS | DURATION | URI | URL | DISC_NUMBER | TRACK_NUMBER | EXPLICIT | RESTRICTION\n" {
+		t.Fatalf("extended=%q", got)
+	}
+	for _, csv := range []string{"album_id", "album", "artwork"} {
+		if _, err := SelectAlbumTrackFields(csv, false); err == nil {
+			t.Fatalf("field %q accepted", csv)
+		}
+	}
+}

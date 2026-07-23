@@ -88,6 +88,16 @@ artist_id=0TnOYISbd1XYRBk9myaseg
 [[ $("$SPTFY" --backend file albums get "spotify:album:$album_id" --id) == "$album_id" ]] || { printf '%s\n' 'album get returned an unexpected ID' >&2; exit 1; }
 [[ $("$SPTFY" --backend file artists get "https://open.spotify.com/artist/$artist_id" --id) == "$artist_id" ]] || { printf '%s\n' 'artist get returned an unexpected ID' >&2; exit 1; }
 
+album_tracks_out=$("$SPTFY" --backend file albums tracks list "spotify:album:$album_id" --max 1)
+[[ $(sed -n '1p' <<<"$album_tracks_out") == "Album ID: $album_id" ]] || { printf '%s\n' 'album tracks returned an unexpected parent' >&2; exit 1; }
+[[ $(sed -n '2p' <<<"$album_tracks_out") == 'ID | TRACK | ARTIST_IDS | ARTISTS | DURATION' ]] || { printf '%s\n' 'album tracks returned an unexpected shape' >&2; exit 1; }
+[[ $(wc -l <<<"$album_tracks_out") -eq 3 ]] || { printf '%s\n' 'album tracks did not return exactly one row' >&2; exit 1; }
+
+artist_albums_out=$("$SPTFY" --backend file artists albums list "https://open.spotify.com/artist/$artist_id" --max 1)
+[[ $(sed -n '1p' <<<"$artist_albums_out") == "Artist ID: $artist_id" ]] || { printf '%s\n' 'artist albums returned an unexpected parent' >&2; exit 1; }
+[[ $(sed -n '2p' <<<"$artist_albums_out") == 'ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS' ]] || { printf '%s\n' 'artist albums returned an unexpected shape' >&2; exit 1; }
+[[ $(wc -l <<<"$artist_albums_out") -eq 3 ]] || { printf '%s\n' 'artist albums did not return exactly one row' >&2; exit 1; }
+
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID" --overwrite
 if [[ $live_dry != 1 ]]; then
   go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^TestExpireCredential$' -count=1

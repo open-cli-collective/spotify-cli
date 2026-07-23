@@ -93,6 +93,8 @@ canonical `open.spotify.com` URL:
 sptfy tracks get 11dFghVXANMlKmJXsNCbNl
 sptfy albums get spotify:album:4aawyAB9vmqN3uQ7FjRGTy
 sptfy artists get https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg
+sptfy albums tracks list spotify:album:4aawyAB9vmqN3uQ7FjRGTy
+sptfy artists albums list https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg
 ```
 
 ```text
@@ -105,6 +107,12 @@ Duration: 3:27
 Catalog reads are text-only. `--id` emits only the fetched ID and overrides
 `--extended`, `--fields`, and `--include-artwork`. Selected identity fields
 remain in the stable identity header instead of being duplicated below it.
+
+Relationship lists accept the same parent references. Normal output prints the
+parent ID once before the child table; `--id` prints only child IDs.
+Album-track pages support 1–50 results and expose no album or artwork columns.
+Artist-album pages support 1–10 results and can include album artwork metadata.
+Both default to 10 and write opaque continuation hints to stderr.
 
 ## Development
 
@@ -134,9 +142,9 @@ make live-smoke
 ```
 
 The harness is interactive because Spotify authorization opens a browser. It
-exercises setup, identity, refresh, search/pagination shapes, catalog gets,
-replacement, clear, and re-initialization without exporting the stored OAuth
-credential.
+exercises setup, identity, refresh, search/pagination shapes, catalog gets and
+relationship traversals, replacement, clear, and re-initialization without
+exporting the stored OAuth credential.
 
 ## License
 

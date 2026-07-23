@@ -73,6 +73,16 @@ elif [[ $args == *" albums get "* ]]; then
 elif [[ $args == *" artists get "* ]]; then
   [[ $args == *" artists get https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg --id "* ]] || exit 11
   printf '0TnOYISbd1XYRBk9myaseg\n'
+elif [[ $args == *" albums tracks list "* ]]; then
+  [[ $args == *" albums tracks list spotify:album:4aawyAB9vmqN3uQ7FjRGTy --max 1 "* ]] || exit 12
+  printf 'Album ID: 4aawyAB9vmqN3uQ7FjRGTy\n'
+  printf 'ID | TRACK | ARTIST_IDS | ARTISTS | DURATION\n'
+  printf 'track-1 | Song | artist-1 | Artist | 1:00\n'
+elif [[ $args == *" artists albums list "* ]]; then
+  [[ $args == *" artists albums list https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg --max 1 "* ]] || exit 13
+  printf 'Artist ID: 0TnOYISbd1XYRBk9myaseg\n'
+  printf 'ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n'
+  printf 'album-1 | Album | artist-1 | Artist | 2026 | 1\n'
 fi
 FAKE
 chmod +x "$fake"

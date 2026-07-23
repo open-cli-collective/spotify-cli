@@ -3,11 +3,9 @@ package searchcmd
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/open-cli-collective/cli-common/credstore"
@@ -18,6 +16,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
+	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
 )
 
 const (
@@ -262,26 +261,15 @@ func writeSearchOutput(command *cobra.Command, rendered, surface string, offset,
 }
 
 func encodePageToken(surface string, offset int) string {
-	return base64.RawURLEncoding.EncodeToString([]byte("v1:" + surface + ":" + strconv.Itoa(offset)))
+	return pagetoken.Encode(surface, offset)
 }
 
 func decodePageToken(surface, value string) (int, error) {
-	if value == "" {
-		return 0, nil
-	}
 	if len(value) > 64 {
 		return 0, errors.New("invalid --next-page-token")
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	offset, err := pagetoken.Decode(surface, value, maxOffset)
 	if err != nil {
-		return 0, errors.New("invalid --next-page-token")
-	}
-	parts := strings.Split(string(decoded), ":")
-	if len(parts) != 3 || parts[0] != "v1" || parts[1] != surface {
-		return 0, errors.New("invalid --next-page-token")
-	}
-	offset, err := strconv.Atoi(parts[2])
-	if err != nil || offset < 0 || offset > maxOffset {
 		return 0, errors.New("invalid --next-page-token")
 	}
 	return offset, nil

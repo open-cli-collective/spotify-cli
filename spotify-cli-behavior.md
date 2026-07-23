@@ -20,6 +20,8 @@ The currently implemented surface contains exactly these commands:
 - `sptfy tracks get <id-or-reference>`
 - `sptfy albums get <id-or-reference>`
 - `sptfy artists get <id-or-reference>`
+- `sptfy albums tracks list <album-id-or-reference>`
+- `sptfy artists albums list <artist-id-or-reference>`
 
 The remaining catalog and library ideas under [Future roadmap](#future-roadmap)
 are directional and non-normative until promoted into the command sections.
@@ -244,6 +246,26 @@ rules. `--fields` replaces attributes below the identity header; selected
 identity fields are not duplicated. Artwork is URL and dimensions metadata
 only and is never downloaded.
 
+## Catalog traversal
+
+### `sptfy albums tracks list <album-id-or-reference>`
+
+### `sptfy artists albums list <artist-id-or-reference>`
+
+Both commands accept the same validated raw ID, URI, and URL forms as catalog
+gets. They request one fixed-origin relationship page and never follow a
+provider `next` URL. `--next-page-token` is bound to the relationship and
+parsed parent ID and is validated before authentication.
+
+Normal output starts with exactly one `Album ID: <id>` or `Artist ID: <id>`
+line followed by the child table. `--id` emits only child IDs, one per line.
+Album tracks default to 10 and allow `--max` values from 1 through 50. Their
+fields are `ID`, `TRACK`, `ARTIST_IDS`, `ARTISTS`, and `DURATION`; `--extended`
+adds `URI`, `URL`, `DISC_NUMBER`, `TRACK_NUMBER`, `EXPLICIT`, and
+`RESTRICTION`. Parent album and artwork fields are unavailable. Artist albums
+default to 10 and allow `--max` values from 1 through 10; they reuse album
+fields, including optional artwork URL metadata.
+
 ## Request behavior
 
 - Requests use fixed Spotify account/API origins; continuation data never
@@ -309,6 +331,16 @@ and hostile URL references must fail before credential or network access.
 Fixture tests verify exactly one fixed-origin single-resource request plus
 inherited authorization, retry, cancellation, and bounded-body behavior.
 
+### Catalog traversal
+
+Exercise raw ID, Spotify URI, and canonical Spotify URL parents for album
+tracks and artist albums. Cover exact default, ID-only, selected-field,
+extended, artwork where available, empty-page, continuation, parent-header,
+and stdout/stderr behavior. Invalid parents, endpoint-specific page sizes,
+fields, and wrong-relationship or wrong-parent tokens fail before network I/O.
+Fixture tests verify fixed relationship paths, page validation, inherited
+transport behavior, and that provider pagination URLs are never followed.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -319,7 +351,6 @@ normal Spotify configuration or OS keychain.
 The following ideas preserve product direction but are not commitments for the
 initial release:
 
-- Traverse album → tracks and artist → albums.
 - List, check, add, and remove saved tracks and albums.
 - Validate and deduplicate complete mutation batches before making changes.
 - Chunk generic Spotify library requests at the upstream maximum while

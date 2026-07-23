@@ -8,22 +8,24 @@ are authoritative for command naming, state, secrets, output, scriptability,
 CI, release, and distribution. When this document differs, `cli-common` wins
 and this document must be corrected.
 
-The initial release contains exactly these surfaces:
+The currently implemented surface contains exactly these commands:
 
 - `sptfy init`
 - `sptfy set-credential`
 - `sptfy config show|path|clear`
 - `sptfy me`
 - `sptfy search track <query>`
+- `sptfy search album <query>`
+- `sptfy search artist <query>`
 
-The catalog and library ideas under [Future roadmap](#future-roadmap) are
-directional and non-normative. They are not part of the initial stopping point.
+The remaining catalog and library ideas under [Future roadmap](#future-roadmap)
+are directional and non-normative until promoted into the command sections.
 
 ## Authentication and configuration
 
 `sptfy` uses Spotify Authorization Code with PKCE for user authorization. The
 user supplies a Spotify client ID; the CLI never accepts or stores a client
-secret. The initial release requests only `user-read-private`; track search
+secret. The CLI currently requests only `user-read-private`; catalog search
 does not require an additional scope. Later commands may require
 reauthorization for additional scopes.
 
@@ -132,7 +134,7 @@ Spotify catalog relationships are a graph, not a single parent tree. Outputs
 therefore expose explicit identifiers instead of a generic `parent` object.
 
 - Track rows include the associated album ID and every credited artist ID.
-- Album rows in future commands include every credited artist ID.
+- Album rows include every credited artist ID.
 - Parent-scoped future commands render the parent identity once above the child
   table instead of repeating it in every row.
 - Membership and mutation commands do not make extra metadata calls solely to
@@ -179,6 +181,40 @@ More results available (next: <opaque-token>)
 An empty result is successful and emits no fabricated row. Invalid queries,
 page sizes, page tokens, and field selections fail before the Spotify request.
 
+## Album search
+
+### `sptfy search album <query>`
+
+Album search follows the track-search query, pagination, validation, and output
+shape rules. Its continuation tokens are bound to album search.
+
+Default output:
+
+```text
+ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS
+```
+
+`--extended` adds `URI`, `URL`, `ALBUM_TYPE`,
+`RELEASE_DATE_PRECISION`, and `RESTRICTION`. `--include-artwork` adds
+`ARTWORK`. Every credited artist ID and name is emitted in its corresponding
+comma-separated cell.
+
+## Artist search
+
+### `sptfy search artist <query>`
+
+Artist search follows the track-search query, pagination, validation, and
+output shape rules. Its continuation tokens are bound to artist search.
+
+Default output:
+
+```text
+ID | ARTIST | GENRES
+```
+
+`--extended` adds `URI` and `URL`. `--include-artwork` adds `ARTWORK`.
+Popularity and follower data are not requested or rendered.
+
 ## Request behavior
 
 - Requests use fixed Spotify account/API origins; continuation data never
@@ -193,7 +229,7 @@ page sizes, page tokens, and field selections fail before the Spotify request.
 - Authorization headers, access tokens, refresh tokens, authorization codes,
   and PKCE verifier/state material never appear in logs or errors.
 
-## Initial acceptance suite
+## Acceptance suite
 
 The initial suite proves only the shipped surface.
 
@@ -224,6 +260,17 @@ wrong-surface page tokens, and unknown fields must fail before network I/O.
 Tests also cover token refresh, rate limiting, bounded transient retries,
 cancellation, bounded bodies, and cell sanitization.
 
+### Album and artist search
+
+Exercise ordinary, qualified, quoted, and Unicode queries. Cover exact default,
+ID-only, selected-field, extended, and artwork output; empty pages; page sizes
+1 and 10; and continuation resume for both resource types.
+
+Invalid queries, page sizes, fields, malformed tokens, and tokens issued for a
+different search resource fail before network I/O. Fixture tests verify fixed
+origin requests, response validation, and that Spotify pagination URLs are
+never followed.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -234,7 +281,6 @@ normal Spotify configuration or OS keychain.
 The following ideas preserve product direction but are not commitments for the
 initial release:
 
-- Search albums and artists.
 - Resolve Spotify IDs, URIs, and URLs for track, album, and artist metadata.
 - Traverse album → tracks and artist → albums.
 - List, check, add, and remove saved tracks and albums.

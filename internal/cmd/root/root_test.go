@@ -148,24 +148,28 @@ func TestUnknownCommandsAreUsageErrors(t *testing.T) {
 	}
 }
 
-func TestSearchTrackIsWiredToAuthenticatedSession(t *testing.T) {
-	h := newHarness(t)
-	cfg := config.Default()
-	cfg.ClientID = "client-id"
-	if err := config.Save(h.deps.Scope, cfg); err != nil {
-		t.Fatal(err)
-	}
-	err := h.execute("search", "track", "query")
-	if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-		t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
+func TestSearchCommandsAreWiredToAuthenticatedSession(t *testing.T) {
+	for _, resource := range []string{"track", "album", "artist"} {
+		h := newHarness(t)
+		cfg := config.Default()
+		cfg.ClientID = "client-id"
+		if err := config.Save(h.deps.Scope, cfg); err != nil {
+			t.Fatal(err)
+		}
+		err := h.execute("search", resource, "query")
+		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
+		}
 	}
 }
 
-func TestSearchTrackRejectsJSONBeforeSession(t *testing.T) {
-	h := newHarness(t)
-	err := h.execute("search", "track", "query", "--json")
-	if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-		t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
+func TestSearchCommandsRejectJSONBeforeSession(t *testing.T) {
+	for _, resource := range []string{"track", "album", "artist"} {
+		h := newHarness(t)
+		err := h.execute("search", resource, "query", "--json")
+		if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
+		}
 	}
 }
 

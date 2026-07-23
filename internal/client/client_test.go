@@ -121,6 +121,81 @@ func TestSearchTracksEncodesQueryAndDecodesBreadcrumbs(t *testing.T) {
 	}
 }
 
+func TestSearchAlbumsEncodesQueryAndDecodesBreadcrumbs(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		query := request.URL.Query()
+		if request.Method != http.MethodGet || request.URL.Host != "api.spotify.invalid" || request.URL.Path != "/v1/search" || query.Get("q") != `artist:"Björk"` || query.Get("type") != "album" || query.Get("limit") != "1" || query.Get("offset") != "10" {
+			t.Fatalf("request = %s %s query=%v", request.Method, request.URL.Path, query)
+		}
+		return response(http.StatusOK, `{"albums":{"items":[{"id":"album","name":"Debut","artists":[{"id":"artist","name":"Björk"}],"release_date":"1993-07-05","release_date_precision":"day","total_tracks":12,"album_type":"album","uri":"spotify:album:album","external_urls":{"spotify":"https://open.spotify.com/album/album"},"images":[{"url":"https://image","width":640,"height":640}],"restrictions":{"reason":"market"}}],"limit":1,"offset":10,"total":12,"next":"https://evil.invalid/follow-me"}}`), nil
+	})}
+	page, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).SearchAlbums(context.Background(), `artist:"Björk"`, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Artists[0].ID != "artist" || page.Items[0].ReleaseDate != "1993-07-05" || !page.HasNext || page.Offset != 10 || calls != 1 {
+		t.Fatalf("page = %+v calls=%d", page, calls)
+	}
+}
+
+func TestSearchArtistsEncodesQueryAndDecodesPage(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		query := request.URL.Query()
+		if request.Method != http.MethodGet || request.URL.Host != "api.spotify.invalid" || request.URL.Path != "/v1/search" || query.Get("q") != "Björk 東京" || query.Get("type") != "artist" || query.Get("limit") != "1" || query.Get("offset") != "0" {
+			t.Fatalf("request = %s %s query=%v", request.Method, request.URL.Path, query)
+		}
+		return response(http.StatusOK, `{"artists":{"items":[{"id":"artist","name":"Björk","genres":["art pop","electronic"],"uri":"spotify:artist:artist","external_urls":{"spotify":"https://open.spotify.com/artist/artist"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":1,"offset":0,"total":1,"next":"https://evil.invalid/follow-me"}}`), nil
+	})}
+	page, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).SearchArtists(context.Background(), "Björk 東京", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "artist" || len(page.Items[0].Genres) != 2 || !page.HasNext || calls != 1 {
+		t.Fatalf("page = %+v calls=%d", page, calls)
+	}
+}
+
+func TestCatalogSearchRejectsMalformedPages(t *testing.T) {
+	for _, malformed := range []struct {
+		name string
+		page string
+	}{
+		{name: "missing page"},
+		{name: "missing items", page: `{"limit":1,"offset":0,"total":0}`},
+		{name: "null items", page: `{"items":null,"limit":1,"offset":0,"total":0}`},
+		{name: "wrong offset", page: `{"items":[],"limit":1,"offset":1,"total":0}`},
+		{name: "wrong limit", page: `{"items":[],"limit":2,"offset":0,"total":0}`},
+		{name: "negative total", page: `{"items":[],"limit":1,"offset":0,"total":-1}`},
+		{name: "too many items", page: `{"items":[{},{}],"limit":1,"offset":0,"total":2}`},
+		{name: "missing item ID", page: `{"items":[{}],"limit":1,"offset":0,"total":1}`},
+		{name: "whitespace item ID", page: `{"items":[{"id":" \t\n"}],"limit":1,"offset":0,"total":1}`},
+	} {
+		for _, surface := range []string{"albums", "artists"} {
+			t.Run(surface+" "+malformed.name, func(t *testing.T) {
+				body := `{}`
+				if malformed.page != "" {
+					body = `{"` + surface + `":` + malformed.page + `}`
+				}
+				httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(http.StatusOK, body), nil })}
+				client := Client{HTTPClient: httpClient}
+				var err error
+				if surface == "albums" {
+					_, err = client.SearchAlbums(context.Background(), "q", 1, 0)
+				} else {
+					_, err = client.SearchArtists(context.Background(), "q", 1, 0)
+				}
+				if !errors.Is(err, ErrInvalidResponse) {
+					t.Fatalf("body=%s error=%v", body, err)
+				}
+			})
+		}
+	}
+}
+
 func TestSearchTracksRetriesOnlyDocumentedStatuses(t *testing.T) {
 	for _, test := range []struct {
 		name       string

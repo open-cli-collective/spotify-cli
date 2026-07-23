@@ -161,6 +161,46 @@ func TestSessionDelegatesCatalogTraversal(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesSavedAlbums(t *testing.T) {
+	const (
+		album  = "0123456789ABCDEFGHIJKL"
+		artist = "abcdefghijklmnopqrstuv"
+	)
+	var requests []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.Method+" "+request.URL.RequestURI())
+		switch request.URL.Path {
+		case "/v1/me/albums":
+			return response(http.StatusOK, `{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"`+album+`","artists":[{"id":"`+artist+`"}]}}],"limit":1,"offset":0,"total":1,"next":null}`), nil
+		case "/v1/me/library/contains":
+			return response(http.StatusOK, `[true]`), nil
+		default:
+			return response(http.StatusNoContent, ""), nil
+		}
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	uri := "spotify:album:" + album
+	if _, err := authenticated.ListSavedAlbums(context.Background(), 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := authenticated.CheckSavedAlbums(context.Background(), []string{uri}); err != nil || len(saved) != 1 || !saved[0] {
+		t.Fatalf("saved=%v error=%v", saved, err)
+	}
+	if err := authenticated.SaveSavedAlbums(context.Background(), []string{uri}); err != nil {
+		t.Fatal(err)
+	}
+	if err := authenticated.RemoveSavedAlbums(context.Background(), []string{uri}); err != nil {
+		t.Fatal(err)
+	}
+	want := "GET /v1/me/albums?limit=1&offset=0," +
+		"GET /v1/me/library/contains?uris=spotify%3Aalbum%3A" + album + "," +
+		"PUT /v1/me/library?uris=spotify%3Aalbum%3A" + album + "," +
+		"DELETE /v1/me/library?uris=spotify%3Aalbum%3A" + album
+	if strings.Join(requests, ",") != want {
+		t.Fatalf("requests=%v want=%s", requests, want)
+	}
+}
+
 func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
 	t.Helper()
 	statedirtest.Hermetic(t)

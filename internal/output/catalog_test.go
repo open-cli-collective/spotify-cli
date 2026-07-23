@@ -45,6 +45,42 @@ func TestRenderAlbumsShapes(t *testing.T) {
 	}
 }
 
+func TestSavedAlbumFieldsAndRendering(t *testing.T) {
+	fields, err := SelectSavedAlbumFields("", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHeader := "ADDED_AT | ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n"
+	if got := RenderSavedAlbums(nil, fields); got != wantHeader {
+		t.Fatalf("empty=%q want=%q", got, wantHeader)
+	}
+
+	height, width := 640, 640
+	item := client.SavedAlbum{
+		AddedAt: "2026-07-23T12:00:00Z",
+		Album: client.Album{
+			ID: "album-id", Name: "Duets", ReleaseDate: "2026", TotalTracks: 2,
+			Artists: []client.Artist{{ID: "artist-1", Name: "First"}, {ID: "artist-2", Name: "Second"}},
+			URI:     "spotify:album:album-id", Images: []client.Image{{URL: "https://image", Height: &height, Width: &width}},
+		},
+	}
+	fields, err = SelectSavedAlbumFields("added_at,album,artist_ids,artists,artwork", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ADDED_AT | ALBUM | ARTIST_IDS | ARTISTS | ARTWORK\n" +
+		"2026-07-23T12:00:00Z | Duets | artist-1,artist-2 | First,Second | 640x640 https://image\n"
+	if got := RenderSavedAlbums([]client.SavedAlbum{item}, fields); got != want {
+		t.Fatalf("saved=%q want=%q", got, want)
+	}
+	if got := RenderSavedAlbumIDs([]client.SavedAlbum{item}); got != "album-id\n" {
+		t.Fatalf("ids=%q", got)
+	}
+	if _, err := SelectSavedAlbumFields("track", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ADDED_AT") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestRenderArtistsShapes(t *testing.T) {
 	artist := client.Artist{
 		ID: "artist-1", Name: "Björk | live\ncut", URI: "spotify:artist:artist-1",

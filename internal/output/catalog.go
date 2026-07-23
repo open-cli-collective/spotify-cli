@@ -12,6 +12,7 @@ type AlbumField string
 
 // Stable album output fields.
 const (
+	AlbumAddedAt              AlbumField = "ADDED_AT"
 	AlbumID                   AlbumField = "ID"
 	AlbumName                 AlbumField = "ALBUM"
 	AlbumArtistIDs            AlbumField = "ARTIST_IDS"
@@ -27,9 +28,11 @@ const (
 )
 
 var (
-	defaultAlbumFields  = []AlbumField{AlbumID, AlbumName, AlbumArtistIDs, AlbumArtists, AlbumReleaseDate, AlbumTotalTracks}
-	extendedAlbumFields = []AlbumField{AlbumURI, AlbumURL, AlbumType, AlbumReleaseDatePrecision, AlbumRestriction}
-	allAlbumFields      = append(append(append([]AlbumField(nil), defaultAlbumFields...), extendedAlbumFields...), AlbumArtwork)
+	defaultAlbumFields      = []AlbumField{AlbumID, AlbumName, AlbumArtistIDs, AlbumArtists, AlbumReleaseDate, AlbumTotalTracks}
+	extendedAlbumFields     = []AlbumField{AlbumURI, AlbumURL, AlbumType, AlbumReleaseDatePrecision, AlbumRestriction}
+	allAlbumFields          = append(append(append([]AlbumField(nil), defaultAlbumFields...), extendedAlbumFields...), AlbumArtwork)
+	defaultSavedAlbumFields = append([]AlbumField{AlbumAddedAt}, defaultAlbumFields...)
+	allSavedAlbumFields     = append([]AlbumField{AlbumAddedAt}, allAlbumFields...)
 )
 
 // SelectAlbumFields applies the family-wide default, widening, then override precedence.
@@ -41,11 +44,26 @@ func SelectAlbumFields(csv string, extended, includeArtwork bool) ([]AlbumField,
 	if includeArtwork {
 		fields = append(fields, AlbumArtwork)
 	}
-	if strings.TrimSpace(csv) == "" {
-		return fields, nil
+	return selectAlbumFields(csv, fields, allAlbumFields)
+}
+
+// SelectSavedAlbumFields applies saved-album list field precedence.
+func SelectSavedAlbumFields(csv string, extended, includeArtwork bool) ([]AlbumField, error) {
+	fields := append([]AlbumField(nil), defaultSavedAlbumFields...)
+	if extended {
+		fields = append(fields, extendedAlbumFields...)
 	}
-	defaults := fields
-	fields = nil
+	if includeArtwork {
+		fields = append(fields, AlbumArtwork)
+	}
+	return selectAlbumFields(csv, fields, allSavedAlbumFields)
+}
+
+func selectAlbumFields(csv string, defaults, allowed []AlbumField) ([]AlbumField, error) {
+	if strings.TrimSpace(csv) == "" {
+		return defaults, nil
+	}
+	fields := make([]AlbumField, 0, len(defaults))
 	seen := map[AlbumField]bool{}
 	for _, raw := range strings.Split(csv, ",") {
 		trimmed := strings.TrimSpace(raw)
@@ -53,8 +71,8 @@ func SelectAlbumFields(csv string, extended, includeArtwork bool) ([]AlbumField,
 			continue
 		}
 		name := AlbumField(strings.ToUpper(trimmed))
-		if !validAlbumField(name) {
-			return nil, fmt.Errorf("unknown album field %q; valid fields: %s", trimmed, albumFieldNames())
+		if !containsAlbumField(allowed, name) {
+			return nil, fmt.Errorf("unknown album field %q; valid fields: %s", trimmed, albumFieldNames(allowed))
 		}
 		if !seen[name] {
 			fields = append(fields, name)
@@ -97,8 +115,43 @@ func RenderAlbumIDs(albums []client.Album) string {
 	return rendered.String()
 }
 
+// RenderSavedAlbums renders saved albums with their library timestamps.
+func RenderSavedAlbums(items []client.SavedAlbum, fields []AlbumField) string {
+	var rendered strings.Builder
+	headers := make([]string, len(fields))
+	for index, field := range fields {
+		headers[index] = string(field)
+	}
+	rendered.WriteString(strings.Join(headers, " | "))
+	rendered.WriteByte('\n')
+	for _, item := range items {
+		cells := make([]string, len(fields))
+		for index, field := range fields {
+			if field == AlbumAddedAt {
+				cells[index] = cell(item.AddedAt)
+			} else {
+				cells[index] = albumCell(item.Album, field)
+			}
+		}
+		rendered.WriteString(strings.Join(cells, " | "))
+		rendered.WriteByte('\n')
+	}
+	return rendered.String()
+}
+
+// RenderSavedAlbumIDs renders one saved album ID per line.
+func RenderSavedAlbumIDs(items []client.SavedAlbum) string {
+	albums := make([]client.Album, len(items))
+	for index, item := range items {
+		albums[index] = item.Album
+	}
+	return RenderAlbumIDs(albums)
+}
+
 func albumCell(album client.Album, field AlbumField) string {
 	switch field {
+	case AlbumAddedAt:
+		return "-"
 	case AlbumID:
 		return cell(album.ID)
 	case AlbumName:
@@ -128,8 +181,8 @@ func albumCell(album client.Album, field AlbumField) string {
 	}
 }
 
-func validAlbumField(field AlbumField) bool {
-	for _, candidate := range allAlbumFields {
+func containsAlbumField(fields []AlbumField, field AlbumField) bool {
+	for _, candidate := range fields {
 		if candidate == field {
 			return true
 		}
@@ -137,9 +190,9 @@ func validAlbumField(field AlbumField) bool {
 	return false
 }
 
-func albumFieldNames() string {
-	values := make([]string, len(allAlbumFields))
-	for index, field := range allAlbumFields {
+func albumFieldNames(fields []AlbumField) string {
+	values := make([]string, len(fields))
+	for index, field := range fields {
 		values[index] = string(field)
 	}
 	return strings.Join(values, ", ")

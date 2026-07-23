@@ -132,6 +132,21 @@ Lists default to 10 and allow 1–50 results. Normal output begins with
 deduplicate the complete batch before making requests, then print only
 `added<TAB>N` or `removed<TAB>N` after every chunk succeeds.
 
+## Saved albums
+
+```sh
+sptfy library albums list
+sptfy library albums check 4aawyAB9vmqN3uQ7FjRGTy spotify:album:2up3OPMp9Tb4dAKM2erWXQ
+sptfy library albums add https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy
+sptfy library albums remove 4aawyAB9vmqN3uQ7FjRGTy
+```
+
+Lists default to 10 and allow 1–50 results. Normal output begins with
+`ADDED_AT` and preserves every credited artist ID and name; `--id` emits only
+album IDs. Album checks and mutations follow the same complete-batch
+validation, first-seen deduplication, compact output, and 40-item request
+chunking as saved tracks.
+
 ## Development
 
 Requires Go 1.26 or newer.

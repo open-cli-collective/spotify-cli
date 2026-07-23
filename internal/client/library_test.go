@@ -176,10 +176,152 @@ func TestSavedTrackOperationsRejectInvalidInputBeforeRequest(t *testing.T) {
 	}
 }
 
+func TestSavedAlbumListUsesFixedPathAndValidatesPage(t *testing.T) {
+	const (
+		album  = "0123456789ABCDEFGHIJKL"
+		artist = "abcdefghijklmnopqrstuv"
+	)
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.Host != "api.spotify.invalid" ||
+			request.URL.Path != "/v1/me/albums" || request.URL.Query().Get("limit") != "10" ||
+			request.URL.Query().Get("offset") != "20" || len(request.URL.Query()) != 2 {
+			t.Fatalf("request=%s %s", request.Method, request.URL.String())
+		}
+		return response(http.StatusOK, `{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"`+album+`","artists":[{"id":"`+artist+`"}]}}],"limit":10,"offset":20,"total":31,"next":"https://evil.invalid/follow"}`), nil
+	})}
+	page, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).ListSavedAlbums(context.Background(), 10, 20)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Album.ID != album || !page.HasNext {
+		t.Fatalf("page=%+v error=%v", page, err)
+	}
+
+	for _, body := range []string{
+		`{}`,
+		`{"items":[],"limit":11,"offset":20,"total":0}`,
+		`{"items":[],"limit":10,"offset":21,"total":0}`,
+		`{"items":[],"limit":10,"offset":20,"total":-1}`,
+		`{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"bad","artists":[{"id":"abcdefghijklmnopqrstuv"}]}}],"limit":10,"offset":20,"total":1}`,
+		`{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"0123456789ABCDEFGHIJKL","artists":[]}}],"limit":10,"offset":20,"total":1}`,
+		`{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"0123456789ABCDEFGHIJKL","artists":[{"id":"bad"}]}}],"limit":10,"offset":20,"total":1}`,
+		`{"items":[{"album":{"id":"0123456789ABCDEFGHIJKL","artists":[{"id":"abcdefghijklmnopqrstuv"}]}}],"limit":10,"offset":20,"total":1}`,
+	} {
+		httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(http.StatusOK, body), nil
+		})
+		if _, err := (Client{HTTPClient: httpClient}).ListSavedAlbums(context.Background(), 10, 20); !errors.Is(err, ErrInvalidResponse) {
+			t.Fatalf("body=%s error=%v", body, err)
+		}
+	}
+}
+
+func TestSavedAlbumOperationsUseGenericLibraryChunks(t *testing.T) {
+	for _, count := range []int{40, 41, 80, 81} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			uris := albumLibraryURIs(count)
+			isSaved := func(uri string) bool {
+				index, _ := strconv.Atoi(strings.TrimPrefix(uri, "spotify:album:"))
+				return index%5 == 0 || index%13 == 2
+			}
+			var checkSizes []int
+			checkClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Method != http.MethodGet || request.URL.Path != "/v1/me/library/contains" {
+					t.Fatalf("request=%s %s", request.Method, request.URL.String())
+				}
+				chunk := strings.Split(request.URL.Query().Get("uris"), ",")
+				checkSizes = append(checkSizes, len(chunk))
+				values := make([]string, len(chunk))
+				for index, uri := range chunk {
+					values[index] = strconv.FormatBool(isSaved(uri))
+				}
+				return response(http.StatusOK, "["+strings.Join(values, ",")+"]"), nil
+			})}
+			got, err := (Client{HTTPClient: checkClient}).CheckSavedAlbums(context.Background(), uris)
+			want := make([]bool, count)
+			for index, uri := range uris {
+				want[index] = isSaved(uri)
+			}
+			if err != nil || !slices.Equal(got, want) || len(checkSizes) != (count+39)/40 {
+				t.Fatalf("check sizes=%v results=%v want=%v error=%v", checkSizes, got, want, err)
+			}
+
+			for _, method := range []string{http.MethodPut, http.MethodDelete} {
+				var sizes []int
+				var seen []string
+				httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					if request.Method != method || request.URL.Path != "/v1/me/library" {
+						t.Fatalf("request=%s %s", request.Method, request.URL.String())
+					}
+					chunk := strings.Split(request.URL.Query().Get("uris"), ",")
+					sizes = append(sizes, len(chunk))
+					seen = append(seen, chunk...)
+					return response(http.StatusNoContent, ""), nil
+				})}
+				spotify := Client{HTTPClient: httpClient}
+				if method == http.MethodPut {
+					err = spotify.SaveSavedAlbums(context.Background(), uris)
+				} else {
+					err = spotify.RemoveSavedAlbums(context.Background(), uris)
+				}
+				if err != nil || len(sizes) != (count+39)/40 || !slices.Equal(seen, uris) {
+					t.Fatalf("method=%s sizes=%v seen=%v error=%v", method, sizes, seen, err)
+				}
+				for index, size := range sizes {
+					if size != min(40, count-index*40) {
+						t.Fatalf("method=%s sizes=%v", method, sizes)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSavedAlbumOperationsRejectWrongKindsAndMalformedResponsesBeforeContinuing(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		if request.Method == http.MethodGet {
+			return response(http.StatusOK, `[true]`), nil
+		}
+		if calls == 2 {
+			return response(http.StatusInternalServerError, "secret"), nil
+		}
+		return response(http.StatusNoContent, ""), nil
+	})}
+	spotify := Client{HTTPClient: httpClient}
+	for _, call := range []func() error{
+		func() error { _, err := spotify.CheckSavedAlbums(context.Background(), nil); return err },
+		func() error {
+			return spotify.SaveSavedAlbums(context.Background(), []string{"spotify:track:0123456789ABCDEFGHIJKL"})
+		},
+		func() error { return spotify.RemoveSavedAlbums(context.Background(), []string{"spotify:album:bad"}) },
+	} {
+		if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
+			t.Fatalf("calls=%d error=%v", calls, err)
+		}
+	}
+
+	if _, err := spotify.CheckSavedAlbums(context.Background(), albumLibraryURIs(41)); !errors.Is(err, ErrInvalidResponse) || calls != 1 {
+		t.Fatalf("check calls=%d error=%v", calls, err)
+	}
+	for _, mutate := range []func(context.Context, []string) error{spotify.SaveSavedAlbums, spotify.RemoveSavedAlbums} {
+		calls = 0
+		if err := mutate(context.Background(), albumLibraryURIs(81)); !errors.Is(err, ErrUpstream) || calls != 2 {
+			t.Fatalf("mutation calls=%d error=%v", calls, err)
+		}
+	}
+}
+
 func libraryURIs(count int) []string {
 	result := make([]string, count)
 	for index := range result {
 		result[index] = fmt.Sprintf("spotify:track:%022d", index)
+	}
+	return result
+}
+
+func albumLibraryURIs(count int) []string {
+	result := make([]string, count)
+	for index := range result {
+		result[index] = fmt.Sprintf("spotify:album:%022d", index)
 	}
 	return result
 }

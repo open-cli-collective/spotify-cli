@@ -15,9 +15,25 @@ fi
 umask 077
 SPOTIFY_CLI_LIVE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/spotify-cli-live.XXXXXX")
 export SPOTIFY_CLI_LIVE_ROOT
+library_track_id=
+library_original_saved=
+library_restore_needed=0
 cleanup() {
   live_status=$?
   trap - EXIT HUP INT TERM
+  if [[ $library_restore_needed == 1 ]]; then
+    if [[ $library_original_saved == true ]]; then
+      if ! "$SPTFY" --backend file library tracks add "$library_track_id" >/dev/null 2>&1; then
+        printf 'warning: failed to restore original saved-track membership for %s\n' "$library_track_id" >&2
+        live_status=1
+      fi
+    else
+      if ! "$SPTFY" --backend file library tracks remove "$library_track_id" >/dev/null 2>&1; then
+        printf 'warning: failed to restore original saved-track membership for %s\n' "$library_track_id" >&2
+        live_status=1
+      fi
+    fi
+  fi
   rm -rf -- "$SPOTIFY_CLI_LIVE_ROOT"
   exit "$live_status"
 }
@@ -51,6 +67,7 @@ fi
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID"
 me_out=$("$SPTFY" --backend file me)
 grep -q '^account_id' <<<"$me_out"
+grep -Fxq $'scopes\tuser-library-modify,user-library-read,user-read-private' <<<"$me_out"
 ordinary_out=$("$SPTFY" --backend file search track a --max 10)
 [[ $(wc -l <<<"$ordinary_out") -gt 1 ]] || { printf '%s\n' 'ordinary search returned no rows' >&2; exit 1; }
 live_nonce=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
@@ -84,6 +101,23 @@ artist_out=$("$SPTFY" --backend file search artist 'Björk' --max 1)
 track_id=11dFghVXANMlKmJXsNCbNl
 album_id=4aawyAB9vmqN3uQ7FjRGTy
 artist_id=0TnOYISbd1XYRBk9myaseg
+library_track_id=$track_id
+library_out=$("$SPTFY" --backend file library tracks list --max 1)
+[[ $(sed -n '1p' <<<"$library_out") == 'ADDED_AT | ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION' ]] || { printf '%s\n' 'saved tracks returned an unexpected shape' >&2; exit 1; }
+library_original_saved=$("$SPTFY" --backend file library tracks check "$library_track_id" | awk -F ' \\| ' 'NR == 2 {print $3}')
+[[ $library_original_saved == true || $library_original_saved == false ]] || { printf '%s\n' 'saved-track check returned an unexpected value' >&2; exit 1; }
+library_restore_needed=1
+if [[ $library_original_saved == true ]]; then
+  [[ $("$SPTFY" --backend file library tracks remove "$library_track_id") == $'removed\t1' ]]
+  [[ $("$SPTFY" --backend file library tracks check "$library_track_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == false ]]
+  [[ $("$SPTFY" --backend file library tracks add "$library_track_id") == $'added\t1' ]]
+else
+  [[ $("$SPTFY" --backend file library tracks add "$library_track_id") == $'added\t1' ]]
+  [[ $("$SPTFY" --backend file library tracks check "$library_track_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == true ]]
+  [[ $("$SPTFY" --backend file library tracks remove "$library_track_id") == $'removed\t1' ]]
+fi
+[[ $("$SPTFY" --backend file library tracks check "$library_track_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == "$library_original_saved" ]] || { printf '%s\n' 'saved-track membership was not restored' >&2; exit 1; }
+library_restore_needed=0
 [[ $("$SPTFY" --backend file tracks get "$track_id" --id) == "$track_id" ]] || { printf '%s\n' 'track get returned an unexpected ID' >&2; exit 1; }
 [[ $("$SPTFY" --backend file albums get "spotify:album:$album_id" --id) == "$album_id" ]] || { printf '%s\n' 'album get returned an unexpected ID' >&2; exit 1; }
 [[ $("$SPTFY" --backend file artists get "https://open.spotify.com/artist/$artist_id" --id) == "$artist_id" ]] || { printf '%s\n' 'artist get returned an unexpected ID' >&2; exit 1; }

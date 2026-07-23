@@ -45,6 +45,9 @@ OAuth token in the configured credential backend. Setup messages and the
 authorization URL go to stderr. `me` writes the authenticated identity and
 granted scopes to stdout.
 
+Authorization requests `user-library-modify`, `user-library-read`, and
+`user-read-private`. Replace older credentials with `sptfy init --overwrite`.
+
 For a prompt-free setup, supply `--non-interactive`. Use `--no-browser` to
 open the printed URL yourself, or `--auth-code-stdin` to paste the complete
 redirected URL back into the command.
@@ -113,6 +116,21 @@ parent ID once before the child table; `--id` prints only child IDs.
 Album-track pages support 1–50 results and expose no album or artwork columns.
 Artist-album pages support 1–10 results and can include album artwork metadata.
 Both default to 10 and write opaque continuation hints to stderr.
+
+## Saved tracks
+
+```sh
+sptfy library tracks list
+sptfy library tracks check 11dFghVXANMlKmJXsNCbNl spotify:track:0VjIjW4GlUZAMYd2vXMi3b
+sptfy library tracks add https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl
+sptfy library tracks remove 11dFghVXANMlKmJXsNCbNl
+```
+
+Lists default to 10 and allow 1–50 results. Normal output begins with
+`ADDED_AT`; `--id` emits only track IDs. Checks emit
+`REFERENCE | ID | SAVED` in first-seen unique order. Mutations validate and
+deduplicate the complete batch before making requests, then print only
+`added<TAB>N` or `removed<TAB>N` after every chunk succeeds.
 
 ## Development
 

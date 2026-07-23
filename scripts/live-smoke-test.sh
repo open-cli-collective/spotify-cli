@@ -25,10 +25,35 @@ if [[ $args == *" config clear "* ]]; then
   touch "$marker"
 elif [[ $args == *" init "* ]]; then
   [[ $args == *" --backend file "* && $args == *" --non-interactive "* ]] || exit 8
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED:-0} == 1 && ! -f $XDG_DATA_HOME/library-initialized ]]; then
+    touch "$XDG_DATA_HOME/library-saved" "$XDG_DATA_HOME/library-initialized"
+  fi
   rm -f "$marker"
 elif [[ $args == *" me "* ]]; then
   [[ ! -f $marker ]] || exit 4
-  printf 'account_id\ttest\nscopes\tuser-read-private\n'
+  printf 'account_id\ttest\nscopes\tuser-library-modify,user-library-read,user-read-private\n'
+elif [[ $args == *" library tracks list "* ]]; then
+  printf 'ADDED_AT | ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
+  printf '2026-07-23T12:00:00Z | 11dFghVXANMlKmJXsNCbNl | Song | artist-1 | Artist | album-1 | Album | 1:00\n'
+elif [[ $args == *" library tracks check "* ]]; then
+  printf 'REFERENCE | ID | SAVED\n'
+  if [[ -f $XDG_DATA_HOME/library-saved ]]; then
+    printf '11dFghVXANMlKmJXsNCbNl | 11dFghVXANMlKmJXsNCbNl | true\n'
+  else
+    printf '11dFghVXANMlKmJXsNCbNl | 11dFghVXANMlKmJXsNCbNl | false\n'
+  fi
+elif [[ $args == *" library tracks add "* ]]; then
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_FAIL_RESTORE:-0} == 1 && ${SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED:-0} == 1 ]]; then
+    exit 14
+  fi
+  touch "$XDG_DATA_HOME/library-saved"
+  printf 'added\t1\n'
+elif [[ $args == *" library tracks remove "* ]]; then
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_FAIL_RESTORE:-0} == 1 && ${SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED:-0} == 0 ]]; then
+    exit 15
+  fi
+  rm -f "$XDG_DATA_HOME/library-saved"
+  printf 'removed\t1\n'
 elif [[ $args == *" search track "* ]]; then
   printf 'ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
   if [[ $args != *" track:\"sptfy-"* ]]; then
@@ -98,12 +123,32 @@ expect_guard_failure env -u SPOTIFY_CLI_LIVE SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=
 expect_guard_failure env -u SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env -u SPOTIFY_CLIENT_ID SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" ./scripts/live-smoke.sh
 
-TMPDIR="$test_root" \
-SPOTIFY_CLI_LIVE=1 \
-SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
-SPOTIFY_CLI_LIVE_DRY_RUN=1 \
-SPOTIFY_CLI_LIVE_BINARY="$fake" \
-SPOTIFY_CLIENT_ID=test \
-./scripts/live-smoke.sh >/dev/null 2>&1
+for initially_saved in 0 1; do
+  TMPDIR="$test_root" \
+  SPOTIFY_CLI_LIVE=1 \
+  SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+  SPOTIFY_CLI_LIVE_DRY_RUN=1 \
+  SPOTIFY_CLI_LIVE_BINARY="$fake" \
+  SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
+  SPOTIFY_CLIENT_ID=test \
+  ./scripts/live-smoke.sh >/dev/null 2>&1
+done
 
-[[ $(find "$test_root" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ]]
+for initially_saved in 0 1; do
+  restore_err="$test_root/restore-$initially_saved.err"
+  if TMPDIR="$test_root" \
+    SPOTIFY_CLI_LIVE=1 \
+    SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+    SPOTIFY_CLI_LIVE_DRY_RUN=1 \
+    SPOTIFY_CLI_LIVE_BINARY="$fake" \
+    SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
+    SPOTIFY_CLI_LIVE_FAKE_FAIL_RESTORE=1 \
+    SPOTIFY_CLIENT_ID=test \
+    ./scripts/live-smoke.sh >/dev/null 2>"$restore_err"; then
+    printf '%s\n' 'live harness unexpectedly ignored a restoration failure' >&2
+    exit 1
+  fi
+  grep -Fq 'warning: failed to restore original saved-track membership' "$restore_err"
+done
+
+[[ $(find "$test_root" -mindepth 1 -maxdepth 1 | wc -l) -eq 3 ]]

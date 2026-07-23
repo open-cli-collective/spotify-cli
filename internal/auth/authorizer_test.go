@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,7 +27,7 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 		}
 		tokenRequest = r.Form
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"access-secret","token_type":"Bearer","refresh_token":"refresh-secret","expires_in":3600,"scope":"user-read-private"}`))
+		_, _ = w.Write([]byte(`{"access_token":"access-secret","token_type":"Bearer","refresh_token":"refresh-secret","expires_in":3600,"scope":"user-read-private user-library-read user-library-modify"}`))
 	}))
 	defer server.Close()
 
@@ -61,7 +62,11 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 	if got.AccessToken != "access-secret" || got.RefreshToken != "refresh-secret" {
 		t.Fatalf("token = %+v", got)
 	}
-	if authURL == nil || authURL.Query().Get("code_challenge_method") != "S256" || authURL.Query().Get("scope") != ScopeUserReadPrivate {
+	if want := []string{ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}; !slices.Equal(got.Scopes, want) {
+		t.Fatalf("scopes = %v, want %v", got.Scopes, want)
+	}
+	if authURL == nil || authURL.Query().Get("code_challenge_method") != "S256" ||
+		authURL.Query().Get("scope") != "user-library-modify user-library-read user-read-private" {
 		t.Fatalf("authorization URL = %v", authURL)
 	}
 	redirect := authURL.Query().Get("redirect_uri")
@@ -76,6 +81,18 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), authURL.String()) {
 		t.Fatalf("stderr did not contain authorization URL: %q", stderr.String())
+	}
+}
+
+func TestOAuthConfigOwnsItsExactScopes(t *testing.T) {
+	authorizer := Authorizer{}
+	first := authorizer.oauthConfig("client-id", "http://127.0.0.1/callback")
+	first.Scopes[0] = "mutated"
+
+	second := authorizer.oauthConfig("client-id", "http://127.0.0.1/callback")
+	want := []string{ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
+	if !slices.Equal(second.Scopes, want) {
+		t.Fatalf("scopes = %v, want %v", second.Scopes, want)
 	}
 }
 

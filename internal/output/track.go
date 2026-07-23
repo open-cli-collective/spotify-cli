@@ -27,6 +27,7 @@ const (
 	TrackExplicit    TrackField = "EXPLICIT"
 	TrackRestriction TrackField = "RESTRICTION"
 	TrackArtwork     TrackField = "ARTWORK"
+	TrackAddedAt     TrackField = "ADDED_AT"
 )
 
 var (
@@ -35,6 +36,8 @@ var (
 	extendedTrackFields     = []TrackField{TrackURI, TrackURL, TrackDiscNumber, TrackTrackNumber, TrackExplicit, TrackRestriction}
 	allTrackFields          = append(append(append([]TrackField(nil), defaultTrackFields...), extendedTrackFields...), TrackArtwork)
 	allAlbumTrackFields     = append(append([]TrackField(nil), defaultAlbumTrackFields...), extendedTrackFields...)
+	defaultSavedTrackFields = append([]TrackField{TrackAddedAt}, defaultTrackFields...)
+	allSavedTrackFields     = append([]TrackField{TrackAddedAt}, allTrackFields...)
 )
 
 // SelectTrackFields applies the family-wide default, widening, then override precedence.
@@ -47,6 +50,18 @@ func SelectTrackFields(csv string, extended, artwork bool) ([]TrackField, error)
 		fields = append(fields, TrackArtwork)
 	}
 	return selectTrackFields(csv, fields, allTrackFields)
+}
+
+// SelectSavedTrackFields applies saved-track list field precedence.
+func SelectSavedTrackFields(csv string, extended, artwork bool) ([]TrackField, error) {
+	fields := append([]TrackField(nil), defaultSavedTrackFields...)
+	if extended {
+		fields = append(fields, extendedTrackFields...)
+	}
+	if artwork {
+		fields = append(fields, TrackArtwork)
+	}
+	return selectTrackFields(csv, fields, allSavedTrackFields)
 }
 
 // SelectAlbumTrackFields selects only fields present in simplified album-track responses.
@@ -114,6 +129,61 @@ func RenderTrackIDs(tracks []client.Track) string {
 	return rendered.String()
 }
 
+// RenderSavedTracks renders saved tracks with their library timestamps.
+func RenderSavedTracks(items []client.SavedTrack, fields []TrackField) string {
+	var rendered strings.Builder
+	headers := make([]string, len(fields))
+	for index, field := range fields {
+		headers[index] = string(field)
+	}
+	rendered.WriteString(strings.Join(headers, " | "))
+	rendered.WriteByte('\n')
+	for _, item := range items {
+		cells := make([]string, len(fields))
+		for index, field := range fields {
+			if field == TrackAddedAt {
+				cells[index] = cell(item.AddedAt)
+			} else {
+				cells[index] = trackCell(item.Track, field)
+			}
+		}
+		rendered.WriteString(strings.Join(cells, " | "))
+		rendered.WriteByte('\n')
+	}
+	return rendered.String()
+}
+
+// RenderSavedTrackIDs renders one saved track ID per line.
+func RenderSavedTrackIDs(items []client.SavedTrack) string {
+	tracks := make([]client.Track, len(items))
+	for index, item := range items {
+		tracks[index] = item.Track
+	}
+	return RenderTrackIDs(tracks)
+}
+
+// SavedTrackCheck is one user input and its normalized membership result.
+type SavedTrackCheck struct {
+	Reference string
+	ID        string
+	Saved     bool
+}
+
+// RenderSavedTrackChecks renders saved membership in input order.
+func RenderSavedTrackChecks(checks []SavedTrackCheck) string {
+	var rendered strings.Builder
+	rendered.WriteString("REFERENCE | ID | SAVED\n")
+	for _, check := range checks {
+		rendered.WriteString(cell(check.Reference))
+		rendered.WriteString(" | ")
+		rendered.WriteString(cell(check.ID))
+		rendered.WriteString(" | ")
+		rendered.WriteString(strconv.FormatBool(check.Saved))
+		rendered.WriteByte('\n')
+	}
+	return rendered.String()
+}
+
 // RenderTrack renders one track as an identity header and paired attributes.
 func RenderTrack(track client.Track, fields []TrackField) string {
 	attributes := make([]detailAttribute, 0, len(fields))
@@ -155,6 +225,8 @@ func trackCell(track client.Track, field TrackField) string {
 		return cell(track.Restrictions.Reason)
 	case TrackArtwork:
 		return renderArtwork(track.Album.Images)
+	case TrackAddedAt:
+		return "-"
 	default:
 		return "-"
 	}

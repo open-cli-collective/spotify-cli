@@ -83,6 +83,26 @@ func (session *Session) ListArtistAlbums(ctx context.Context, id string, limit, 
 	return session.client.ListArtistAlbums(ctx, id, limit, offset)
 }
 
+// ListSavedTracks lists saved tracks with the authenticated Spotify client.
+func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
+	return session.client.ListSavedTracks(ctx, limit, offset)
+}
+
+// CheckSavedTracks checks saved-track membership with the authenticated Spotify client.
+func (session *Session) CheckSavedTracks(ctx context.Context, uris []string) ([]bool, error) {
+	return session.client.CheckSavedTracks(ctx, uris)
+}
+
+// SaveSavedTracks saves tracks with the authenticated Spotify client.
+func (session *Session) SaveSavedTracks(ctx context.Context, uris []string) error {
+	return session.client.SaveSavedTracks(ctx, uris)
+}
+
+// RemoveSavedTracks removes saved tracks with the authenticated Spotify client.
+func (session *Session) RemoveSavedTracks(ctx context.Context, uris []string) error {
+	return session.client.RemoveSavedTracks(ctx, uris)
+}
+
 // SearchTracks searches tracks with the authenticated Spotify client.
 func (session *Session) SearchTracks(ctx context.Context, query string, limit, offset int) (client.TrackPage, error) {
 	return session.client.SearchTracks(ctx, query, limit, offset)

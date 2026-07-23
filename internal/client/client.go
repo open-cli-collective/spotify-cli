@@ -128,6 +128,21 @@ type SavedTrackPage struct {
 	HasNext bool
 }
 
+// SavedAlbum is one album and its library timestamp.
+type SavedAlbum struct {
+	AddedAt string `json:"added_at"`
+	Album   Album  `json:"album"`
+}
+
+// SavedAlbumPage is one validated saved-album page.
+type SavedAlbumPage struct {
+	Items   []SavedAlbum
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
 // AlbumPage is one validated Spotify album-search page.
 type AlbumPage struct {
 	Items   []Album
@@ -305,9 +320,59 @@ func (client Client) ListSavedTracks(ctx context.Context, limit, offset int) (Sa
 	}, nil
 }
 
+type savedAlbumPageResponse struct {
+	Items  *[]SavedAlbum `json:"items"`
+	Limit  int           `json:"limit"`
+	Next   *string       `json:"next"`
+	Offset int           `json:"offset"`
+	Total  int           `json:"total"`
+}
+
+// ListSavedAlbums returns one saved-album page without following provider pagination URLs.
+func (client Client) ListSavedAlbums(ctx context.Context, limit, offset int) (SavedAlbumPage, error) {
+	if limit < 1 || limit > 50 || offset < 0 {
+		return SavedAlbumPage{}, ErrInvalidResponse
+	}
+	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response savedAlbumPageResponse
+	if err := client.requestJSON(ctx, http.MethodGet, "/me/albums?"+values.Encode(), &response); err != nil {
+		return SavedAlbumPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return SavedAlbumPage{}, ErrInvalidResponse
+	}
+	for _, item := range *response.Items {
+		if !spotifyref.ValidID(item.Album.ID) || len(item.Album.Artists) == 0 {
+			return SavedAlbumPage{}, ErrInvalidResponse
+		}
+		for _, artist := range item.Album.Artists {
+			if !spotifyref.ValidID(artist.ID) {
+				return SavedAlbumPage{}, ErrInvalidResponse
+			}
+		}
+		if _, err := time.Parse(time.RFC3339, item.AddedAt); err != nil {
+			return SavedAlbumPage{}, ErrInvalidResponse
+		}
+	}
+	return SavedAlbumPage{
+		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
+	}, nil
+}
+
 // CheckSavedTracks reports saved membership in input order.
 func (client Client) CheckSavedTracks(ctx context.Context, uris []string) ([]bool, error) {
-	if !validTrackURIs(uris) {
+	return client.checkSavedItems(ctx, spotifyref.Track, uris)
+}
+
+// CheckSavedAlbums reports saved membership in input order.
+func (client Client) CheckSavedAlbums(ctx context.Context, uris []string) ([]bool, error) {
+	return client.checkSavedItems(ctx, spotifyref.Album, uris)
+}
+
+func (client Client) checkSavedItems(ctx context.Context, kind spotifyref.Kind, uris []string) ([]bool, error) {
+	if !validLibraryURIs(kind, uris) {
 		return nil, ErrInvalidResponse
 	}
 	result := make([]bool, 0, len(uris))
@@ -328,16 +393,26 @@ func (client Client) CheckSavedTracks(ctx context.Context, uris []string) ([]boo
 
 // SaveSavedTracks adds tracks to the current user's library.
 func (client Client) SaveSavedTracks(ctx context.Context, uris []string) error {
-	return client.mutateSavedTracks(ctx, http.MethodPut, uris)
+	return client.mutateSavedItems(ctx, http.MethodPut, spotifyref.Track, uris)
 }
 
 // RemoveSavedTracks removes tracks from the current user's library.
 func (client Client) RemoveSavedTracks(ctx context.Context, uris []string) error {
-	return client.mutateSavedTracks(ctx, http.MethodDelete, uris)
+	return client.mutateSavedItems(ctx, http.MethodDelete, spotifyref.Track, uris)
 }
 
-func (client Client) mutateSavedTracks(ctx context.Context, method string, uris []string) error {
-	if !validTrackURIs(uris) {
+// SaveSavedAlbums adds albums to the current user's library.
+func (client Client) SaveSavedAlbums(ctx context.Context, uris []string) error {
+	return client.mutateSavedItems(ctx, http.MethodPut, spotifyref.Album, uris)
+}
+
+// RemoveSavedAlbums removes albums from the current user's library.
+func (client Client) RemoveSavedAlbums(ctx context.Context, uris []string) error {
+	return client.mutateSavedItems(ctx, http.MethodDelete, spotifyref.Album, uris)
+}
+
+func (client Client) mutateSavedItems(ctx context.Context, method string, kind spotifyref.Kind, uris []string) error {
+	if !validLibraryURIs(kind, uris) {
 		return ErrInvalidResponse
 	}
 	for start := 0; start < len(uris); start += 40 {
@@ -350,12 +425,13 @@ func (client Client) mutateSavedTracks(ctx context.Context, method string, uris 
 	return nil
 }
 
-func validTrackURIs(uris []string) bool {
+func validLibraryURIs(kind spotifyref.Kind, uris []string) bool {
 	if len(uris) == 0 {
 		return false
 	}
+	prefix := "spotify:" + string(kind) + ":"
 	for _, uri := range uris {
-		if !strings.HasPrefix(uri, "spotify:track:") || !spotifyref.ValidID(strings.TrimPrefix(uri, "spotify:track:")) {
+		if !strings.HasPrefix(uri, prefix) || !spotifyref.ValidID(strings.TrimPrefix(uri, prefix)) {
 			return false
 		}
 	}

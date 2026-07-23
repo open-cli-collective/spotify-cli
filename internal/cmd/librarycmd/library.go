@@ -1,4 +1,4 @@
-// Package librarycmd implements saved-track library operations.
+// Package librarycmd implements saved-library operations.
 package librarycmd
 
 import (
@@ -21,7 +21,10 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/spotifyref"
 )
 
-const pageScope = "library-tracks"
+const (
+	trackPageScope = "library-tracks"
+	albumPageScope = "library-albums"
+)
 
 // Session is the authenticated capability required by library commands.
 type Session interface {
@@ -31,6 +34,10 @@ type Session interface {
 	CheckSavedTracks(context.Context, []string) ([]bool, error)
 	SaveSavedTracks(context.Context, []string) error
 	RemoveSavedTracks(context.Context, []string) error
+	ListSavedAlbums(context.Context, int, int) (client.SavedAlbumPage, error)
+	CheckSavedAlbums(context.Context, []string) ([]bool, error)
+	SaveSavedAlbums(context.Context, []string) error
+	RemoveSavedAlbums(context.Context, []string) error
 }
 
 // SessionOpener opens the authenticated capability required by library commands.
@@ -51,7 +58,7 @@ type listOptions struct {
 	artwork       bool
 }
 
-type trackReference struct {
+type libraryReference struct {
 	reference string
 	id        string
 	uri       string
@@ -61,12 +68,14 @@ type trackReference struct {
 func New(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{Use: "library", Short: "Manage the Spotify library", Args: noArgs("library")}
 	tracks := &cobra.Command{Use: "tracks", Short: "Manage saved tracks", Args: noArgs("tracks")}
-	tracks.AddCommand(newList(deps), newCheck(deps), newMutation(deps, "add"), newMutation(deps, "remove"))
-	command.AddCommand(tracks)
+	tracks.AddCommand(newTrackList(deps), newCheck(deps, spotifyref.Track), newMutation(deps, spotifyref.Track, "add"), newMutation(deps, spotifyref.Track, "remove"))
+	albums := &cobra.Command{Use: "albums", Short: "Manage saved albums", Args: noArgs("albums")}
+	albums.AddCommand(newAlbumList(deps), newCheck(deps, spotifyref.Album), newMutation(deps, spotifyref.Album, "add"), newMutation(deps, spotifyref.Album, "remove"))
+	command.AddCommand(tracks, albums)
 	return command
 }
 
-func newList(deps Dependencies) *cobra.Command {
+func newTrackList(deps Dependencies) *cobra.Command {
 	opts := listOptions{max: 10}
 	command := &cobra.Command{
 		Use: "list", Short: "List saved tracks", Args: noArgs("list"),
@@ -82,7 +91,7 @@ func newList(deps Dependencies) *cobra.Command {
 					return exitcode.New(exitcode.Usage, err)
 				}
 			}
-			offset, err := pagetoken.Decode(pageScope, opts.nextPageToken, math.MaxInt-50)
+			offset, err := pagetoken.Decode(trackPageScope, opts.nextPageToken, math.MaxInt-50)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
@@ -103,7 +112,7 @@ func newList(deps Dependencies) *cobra.Command {
 				return exitcode.New(exitcode.Generic, errors.New("writing saved tracks failed"))
 			}
 			if page.HasNext {
-				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(pageScope, page.Offset+page.Limit)); err != nil {
+				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(trackPageScope, page.Offset+page.Limit)); err != nil {
 					return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
 				}
 			}
@@ -120,12 +129,67 @@ func newList(deps Dependencies) *cobra.Command {
 	return command
 }
 
-func newCheck(deps Dependencies) *cobra.Command {
+func newAlbumList(deps Dependencies) *cobra.Command {
+	opts := listOptions{max: 10}
+	command := &cobra.Command{
+		Use: "list", Short: "List saved albums", Args: noArgs("list"),
+		RunE: func(command *cobra.Command, _ []string) error {
+			if opts.max < 1 || opts.max > 50 {
+				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
+			}
+			var fields []output.AlbumField
+			var err error
+			if !opts.id {
+				fields, err = output.SelectSavedAlbumFields(opts.fields, opts.extended, opts.artwork)
+				if err != nil {
+					return exitcode.New(exitcode.Usage, err)
+				}
+			}
+			offset, err := pagetoken.Decode(albumPageScope, opts.nextPageToken, math.MaxInt-50)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
+			}
+			authenticated, err := openSession(command, deps, auth.ScopeUserLibraryRead)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = authenticated.Close() }()
+			page, err := authenticated.ListSavedAlbums(command.Context(), opts.max, offset)
+			if err != nil {
+				return classify(err)
+			}
+			rendered := output.RenderSavedAlbums(page.Items, fields)
+			if opts.id {
+				rendered = output.RenderSavedAlbumIDs(page.Items)
+			}
+			if _, err := io.WriteString(command.OutOrStdout(), rendered); err != nil {
+				return exitcode.New(exitcode.Generic, errors.New("writing saved albums failed"))
+			}
+			if page.HasNext {
+				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(albumPageScope, page.Offset+page.Limit)); err != nil {
+					return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
+				}
+			}
+			return nil
+		},
+	}
+	flags := command.Flags()
+	flags.IntVarP(&opts.max, "max", "m", 10, "Maximum results (1-50)")
+	flags.StringVar(&opts.nextPageToken, "next-page-token", "", "Opaque continuation token")
+	flags.BoolVar(&opts.id, "id", false, "Emit only album IDs")
+	flags.StringVar(&opts.fields, "fields", "", "Comma-separated output fields")
+	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent album fields")
+	flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
+	return command
+}
+
+func newCheck(deps Dependencies, kind spotifyref.Kind) *cobra.Command {
+	plural := resourcePlural(kind)
 	return &cobra.Command{
-		Use: "check <track-reference>...", Short: "Check whether tracks are saved",
+		Use: "check <" + string(kind) + "-reference>...", Short: "Check whether " + plural + " are saved",
 		Args: minimumArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			references, err := parseReferences(args)
+			references, err := parseReferences(args, kind)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, err)
 			}
@@ -134,31 +198,32 @@ func newCheck(deps Dependencies) *cobra.Command {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
-			saved, err := authenticated.CheckSavedTracks(command.Context(), trackURIs(references))
+			saved, err := checkSaved(command.Context(), authenticated, kind, libraryURIs(references))
 			if err != nil {
 				return classify(err)
 			}
 			if len(saved) != len(references) {
 				return exitcode.New(exitcode.Upstream, client.ErrInvalidResponse)
 			}
-			checks := make([]output.SavedTrackCheck, len(references))
+			checks := make([]output.SavedCheck, len(references))
 			for index, reference := range references {
-				checks[index] = output.SavedTrackCheck{Reference: reference.reference, ID: reference.id, Saved: saved[index]}
+				checks[index] = output.SavedCheck{Reference: reference.reference, ID: reference.id, Saved: saved[index]}
 			}
-			if _, err := io.WriteString(command.OutOrStdout(), output.RenderSavedTrackChecks(checks)); err != nil {
-				return exitcode.New(exitcode.Generic, errors.New("writing saved-track checks failed"))
+			if _, err := io.WriteString(command.OutOrStdout(), output.RenderSavedChecks(checks)); err != nil {
+				return exitcode.New(exitcode.Generic, errors.New("writing saved-item checks failed"))
 			}
 			return nil
 		},
 	}
 }
 
-func newMutation(deps Dependencies, verb string) *cobra.Command {
+func newMutation(deps Dependencies, kind spotifyref.Kind, verb string) *cobra.Command {
+	plural := resourcePlural(kind)
 	return &cobra.Command{
-		Use: verb + " <track-reference>...", Short: verb + " tracks in the library",
+		Use: verb + " <" + string(kind) + "-reference>...", Short: verb + " " + plural + " in the library",
 		Args: minimumArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			references, err := parseReferences(args)
+			references, err := parseReferences(args, kind)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, err)
 			}
@@ -167,11 +232,11 @@ func newMutation(deps Dependencies, verb string) *cobra.Command {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
-			uris := trackURIs(references)
+			uris := libraryURIs(references)
 			if verb == "add" {
-				err = authenticated.SaveSavedTracks(command.Context(), uris)
+				err = saveItems(command.Context(), authenticated, kind, uris)
 			} else {
-				err = authenticated.RemoveSavedTracks(command.Context(), uris)
+				err = removeItems(command.Context(), authenticated, kind, uris)
 			}
 			if err != nil {
 				return classify(err)
@@ -188,11 +253,11 @@ func newMutation(deps Dependencies, verb string) *cobra.Command {
 	}
 }
 
-func parseReferences(args []string) ([]trackReference, error) {
-	result := make([]trackReference, 0, len(args))
+func parseReferences(args []string, kind spotifyref.Kind) ([]libraryReference, error) {
+	result := make([]libraryReference, 0, len(args))
 	seen := make(map[string]struct{}, len(args))
 	for _, reference := range args {
-		id, err := spotifyref.Parse(reference, spotifyref.Track)
+		id, err := spotifyref.Parse(reference, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -200,17 +265,45 @@ func parseReferences(args []string) ([]trackReference, error) {
 			continue
 		}
 		seen[id] = struct{}{}
-		result = append(result, trackReference{reference: reference, id: id, uri: "spotify:track:" + id})
+		result = append(result, libraryReference{reference: reference, id: id, uri: "spotify:" + string(kind) + ":" + id})
 	}
 	return result, nil
 }
 
-func trackURIs(references []trackReference) []string {
+func libraryURIs(references []libraryReference) []string {
 	uris := make([]string, len(references))
 	for index, reference := range references {
 		uris[index] = reference.uri
 	}
 	return uris
+}
+
+func resourcePlural(kind spotifyref.Kind) string {
+	if kind == spotifyref.Album {
+		return "albums"
+	}
+	return "tracks"
+}
+
+func checkSaved(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) ([]bool, error) {
+	if kind == spotifyref.Album {
+		return session.CheckSavedAlbums(ctx, uris)
+	}
+	return session.CheckSavedTracks(ctx, uris)
+}
+
+func saveItems(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) error {
+	if kind == spotifyref.Album {
+		return session.SaveSavedAlbums(ctx, uris)
+	}
+	return session.SaveSavedTracks(ctx, uris)
+}
+
+func removeItems(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) error {
+	if kind == spotifyref.Album {
+		return session.RemoveSavedAlbums(ctx, uris)
+	}
+	return session.RemoveSavedTracks(ctx, uris)
 }
 
 func openSession(command *cobra.Command, deps Dependencies, requiredScope string) (Session, error) {

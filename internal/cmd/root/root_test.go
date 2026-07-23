@@ -26,6 +26,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/session"
+	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
 type fakeStore struct {
@@ -176,18 +177,23 @@ func TestSearchCommandsRejectJSONBeforeSession(t *testing.T) {
 func TestLibraryCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
 	const id = "0123456789ABCDEFGHIJKL"
 	for _, test := range []struct {
-		verb string
-		args []string
+		resource string
+		verb     string
+		args     []string
 	}{
-		{verb: "list", args: []string{"library", "tracks", "list"}},
-		{verb: "check", args: []string{"library", "tracks", "check", id}},
-		{verb: "add", args: []string{"library", "tracks", "add", id}},
-		{verb: "remove", args: []string{"library", "tracks", "remove", id}},
+		{resource: "tracks", verb: "list", args: []string{"library", "tracks", "list"}},
+		{resource: "tracks", verb: "check", args: []string{"library", "tracks", "check", id}},
+		{resource: "tracks", verb: "add", args: []string{"library", "tracks", "add", id}},
+		{resource: "tracks", verb: "remove", args: []string{"library", "tracks", "remove", id}},
+		{resource: "albums", verb: "list", args: []string{"library", "albums", "list"}},
+		{resource: "albums", verb: "check", args: []string{"library", "albums", "check", id}},
+		{resource: "albums", verb: "add", args: []string{"library", "albums", "add", id}},
+		{resource: "albums", verb: "remove", args: []string{"library", "albums", "remove", id}},
 	} {
 		h := newHarness(t)
 		if test.verb != "list" {
-			if err := h.execute("library", "tracks", test.verb, id, "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-				t.Fatalf("verb=%s invalid error=%v code=%d store opens=%d", test.verb, err, exitcode.Code(err), len(h.requests))
+			if err := h.execute("library", test.resource, test.verb, id, "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
+				t.Fatalf("resource=%s verb=%s invalid error=%v code=%d store opens=%d", test.resource, test.verb, err, exitcode.Code(err), len(h.requests))
 			}
 		}
 		cfg := config.Default()
@@ -197,8 +203,50 @@ func TestLibraryCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
 		}
 		err := h.execute(test.args...)
 		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-			t.Fatalf("verb=%s error=%v code=%d store opens=%d", test.verb, err, exitcode.Code(err), len(h.requests))
+			t.Fatalf("resource=%s verb=%s error=%v code=%d store opens=%d", test.resource, test.verb, err, exitcode.Code(err), len(h.requests))
 		}
+	}
+}
+
+func TestSavedAlbumArtistsFlowFromProviderJSONToCommandOutput(t *testing.T) {
+	const (
+		albumID   = "0123456789ABCDEFGHIJKL"
+		artistOne = "abcdefghijklmnopqrstuv"
+		artistTwo = "ABCDEFGHIJKLMNOPQRSTUV"
+	)
+	h := newHarness(t)
+	now := h.deps.Now()
+	cfg := config.Default()
+	cfg.ClientID = "client-id"
+	if err := config.Save(h.deps.Scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := token.Encode(token.Envelope{
+		AccessToken: "access", TokenType: "Bearer", RefreshToken: "refresh",
+		ExpiresAt: time.Now().UTC().Add(time.Hour), Scopes: []string{auth.ScopeUserLibraryRead},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.store.values["default/oauth_token"] = string(encoded)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/me/albums" || request.Header.Get("Authorization") != "Bearer access" {
+			t.Fatalf("request=%s authorization=%q", request.URL.String(), request.Header.Get("Authorization"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"`+albumID+`","name":"Duets","artists":[{"id":"`+artistOne+`","name":"First"},{"id":"`+artistTwo+`","name":"Second"}],"release_date":"2026","total_tracks":2}}],"limit":10,"offset":0,"total":1,"next":null}`)
+	}))
+	t.Cleanup(server.Close)
+	h.deps.HTTPClient = server.Client()
+	h.deps.APIBaseURL = server.URL + "/v1"
+
+	if err := h.execute("library", "albums", "list"); err != nil {
+		t.Fatal(err)
+	}
+	want := "ADDED_AT | ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n" +
+		"2026-07-23T12:00:00Z | " + albumID + " | Duets | " + artistOne + "," + artistTwo + " | First,Second | 2026 | 2\n"
+	if h.out.String() != want || h.errOut.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", h.out.String(), h.errOut.String())
 	}
 }
 

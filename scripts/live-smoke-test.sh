@@ -28,6 +28,9 @@ elif [[ $args == *" init "* ]]; then
   if [[ ${SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED:-0} == 1 && ! -f $XDG_DATA_HOME/library-initialized ]]; then
     touch "$XDG_DATA_HOME/library-saved" "$XDG_DATA_HOME/library-initialized"
   fi
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_INITIAL_ALBUM_SAVED:-0} == 1 && ! -f $XDG_DATA_HOME/library-album-initialized ]]; then
+    touch "$XDG_DATA_HOME/library-album-saved" "$XDG_DATA_HOME/library-album-initialized"
+  fi
   rm -f "$marker"
 elif [[ $args == *" me "* ]]; then
   [[ ! -f $marker ]] || exit 4
@@ -53,6 +56,29 @@ elif [[ $args == *" library tracks remove "* ]]; then
     exit 15
   fi
   rm -f "$XDG_DATA_HOME/library-saved"
+  printf 'removed\t1\n'
+elif [[ $args == *" library albums list "* ]]; then
+  if [[ $args == *" --id "* ]]; then
+    printf '2up3OPMp9Tb4dAKM2erWXQ\n'
+  else
+    printf 'ADDED_AT | ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS\n'
+    printf '2026-07-23T12:00:00Z | 4aawyAB9vmqN3uQ7FjRGTy | Album | artist-1,artist-2 | First,Second | 2026 | 2\n'
+  fi
+  if [[ $args == *" --max 1 "* && $args != *" --next-page-token "* ]]; then
+    printf 'More results available (next: album-token)\n' >&2
+  fi
+elif [[ $args == *" library albums check "* ]]; then
+  printf 'REFERENCE | ID | SAVED\n'
+  if [[ -f $XDG_DATA_HOME/library-album-saved ]]; then
+    printf '4aawyAB9vmqN3uQ7FjRGTy | 4aawyAB9vmqN3uQ7FjRGTy | true\n'
+  else
+    printf '4aawyAB9vmqN3uQ7FjRGTy | 4aawyAB9vmqN3uQ7FjRGTy | false\n'
+  fi
+elif [[ $args == *" library albums add "* ]]; then
+  touch "$XDG_DATA_HOME/library-album-saved"
+  printf 'added\t1\n'
+elif [[ $args == *" library albums remove "* ]]; then
+  rm -f "$XDG_DATA_HOME/library-album-saved"
   printf 'removed\t1\n'
 elif [[ $args == *" search track "* ]]; then
   printf 'ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
@@ -124,14 +150,20 @@ expect_guard_failure env -u SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT SPOTIFY_CLI_LIVE=
 expect_guard_failure env -u SPOTIFY_CLIENT_ID SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" ./scripts/live-smoke.sh
 
 for initially_saved in 0 1; do
-  TMPDIR="$test_root" \
-  SPOTIFY_CLI_LIVE=1 \
-  SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
-  SPOTIFY_CLI_LIVE_DRY_RUN=1 \
-  SPOTIFY_CLI_LIVE_BINARY="$fake" \
-  SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
-  SPOTIFY_CLIENT_ID=test \
-  ./scripts/live-smoke.sh >/dev/null 2>&1
+  smoke_err="$test_root/smoke-$initially_saved.err"
+  if ! TMPDIR="$test_root" \
+    SPOTIFY_CLI_LIVE=1 \
+    SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+    SPOTIFY_CLI_LIVE_DRY_RUN=1 \
+    SPOTIFY_CLI_LIVE_BINARY="$fake" \
+    SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
+    SPOTIFY_CLI_LIVE_FAKE_INITIAL_ALBUM_SAVED="$initially_saved" \
+    SPOTIFY_CLIENT_ID=test \
+    ./scripts/live-smoke.sh >/dev/null 2>"$smoke_err"; then
+    sed -n '1,120p' "$smoke_err" >&2
+    exit 1
+  fi
+  rm -f "$smoke_err"
 done
 
 for initially_saved in 0 1; do

@@ -18,6 +18,9 @@ export SPOTIFY_CLI_LIVE_ROOT
 library_track_id=
 library_original_saved=
 library_restore_needed=0
+library_album_id=
+library_album_original_saved=
+library_album_restore_needed=0
 cleanup() {
   live_status=$?
   trap - EXIT HUP INT TERM
@@ -30,6 +33,19 @@ cleanup() {
     else
       if ! "$SPTFY" --backend file library tracks remove "$library_track_id" >/dev/null 2>&1; then
         printf 'warning: failed to restore original saved-track membership for %s\n' "$library_track_id" >&2
+        live_status=1
+      fi
+    fi
+  fi
+  if [[ $library_album_restore_needed == 1 ]]; then
+    if [[ $library_album_original_saved == true ]]; then
+      if ! "$SPTFY" --backend file library albums add "$library_album_id" >/dev/null 2>&1; then
+        printf 'warning: failed to restore original saved-album membership for %s\n' "$library_album_id" >&2
+        live_status=1
+      fi
+    else
+      if ! "$SPTFY" --backend file library albums remove "$library_album_id" >/dev/null 2>&1; then
+        printf 'warning: failed to restore original saved-album membership for %s\n' "$library_album_id" >&2
         live_status=1
       fi
     fi
@@ -118,6 +134,34 @@ else
 fi
 [[ $("$SPTFY" --backend file library tracks check "$library_track_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == "$library_original_saved" ]] || { printf '%s\n' 'saved-track membership was not restored' >&2; exit 1; }
 library_restore_needed=0
+library_album_id=$album_id
+library_album_page_out="$SPOTIFY_CLI_LIVE_ROOT/library-album-page.out"
+library_album_page_err="$SPOTIFY_CLI_LIVE_ROOT/library-album-page.err"
+"$SPTFY" --backend file library albums list --max 1 >"$library_album_page_out" 2>"$library_album_page_err"
+[[ $(sed -n '1p' "$library_album_page_out") == 'ADDED_AT | ID | ALBUM | ARTIST_IDS | ARTISTS | RELEASE_DATE | TOTAL_TRACKS' ]] || { printf '%s\n' 'saved albums returned an unexpected shape' >&2; exit 1; }
+library_album_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$library_album_page_err")
+if [[ $live_dry == 1 && -z $library_album_token ]]; then
+  printf '%s\n' 'saved albums did not return a continuation token' >&2
+  exit 1
+fi
+if [[ -n $library_album_token ]]; then
+  library_album_next=$("$SPTFY" --backend file library albums list --id --max 1 --next-page-token "$library_album_token")
+  [[ -n $library_album_next && $(wc -l <<<"$library_album_next") -eq 1 ]] || { printf '%s\n' 'saved-album continuation returned an unexpected shape' >&2; exit 1; }
+fi
+library_album_original_saved=$("$SPTFY" --backend file library albums check "$library_album_id" | awk -F ' \\| ' 'NR == 2 {print $3}')
+[[ $library_album_original_saved == true || $library_album_original_saved == false ]] || { printf '%s\n' 'saved-album check returned an unexpected value' >&2; exit 1; }
+library_album_restore_needed=1
+if [[ $library_album_original_saved == true ]]; then
+  [[ $("$SPTFY" --backend file library albums remove "$library_album_id") == $'removed\t1' ]]
+  [[ $("$SPTFY" --backend file library albums check "$library_album_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == false ]]
+  [[ $("$SPTFY" --backend file library albums add "$library_album_id") == $'added\t1' ]]
+else
+  [[ $("$SPTFY" --backend file library albums add "$library_album_id") == $'added\t1' ]]
+  [[ $("$SPTFY" --backend file library albums check "$library_album_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == true ]]
+  [[ $("$SPTFY" --backend file library albums remove "$library_album_id") == $'removed\t1' ]]
+fi
+[[ $("$SPTFY" --backend file library albums check "$library_album_id" | awk -F ' \\| ' 'NR == 2 {print $3}') == "$library_album_original_saved" ]] || { printf '%s\n' 'saved-album membership was not restored' >&2; exit 1; }
+library_album_restore_needed=0
 [[ $("$SPTFY" --backend file tracks get "$track_id" --id) == "$track_id" ]] || { printf '%s\n' 'track get returned an unexpected ID' >&2; exit 1; }
 [[ $("$SPTFY" --backend file albums get "spotify:album:$album_id" --id) == "$album_id" ]] || { printf '%s\n' 'album get returned an unexpected ID' >&2; exit 1; }
 [[ $("$SPTFY" --backend file artists get "https://open.spotify.com/artist/$artist_id" --id) == "$artist_id" ]] || { printf '%s\n' 'artist get returned an unexpected ID' >&2; exit 1; }

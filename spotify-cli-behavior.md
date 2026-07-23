@@ -26,9 +26,13 @@ The currently implemented surface contains exactly these commands:
 - `sptfy library tracks check <track-reference>...`
 - `sptfy library tracks add <track-reference>...`
 - `sptfy library tracks remove <track-reference>...`
+- `sptfy library albums list`
+- `sptfy library albums check <album-reference>...`
+- `sptfy library albums add <album-reference>...`
+- `sptfy library albums remove <album-reference>...`
 
-The remaining ideas under [Future roadmap](#future-roadmap)
-are directional and non-normative until promoted into the command sections.
+The product exclusions under [Future boundaries](#future-boundaries) remain
+directional and non-normative until promoted into command sections.
 
 ## Authentication and configuration
 
@@ -289,6 +293,22 @@ query parameter in chunks of at most 40. Check output is
 `REFERENCE | ID | SAVED`. Mutations emit only `added<TAB>N` or `removed<TAB>N`
 after every chunk succeeds; partial failure is reported without rollback.
 
+## Saved albums
+
+`sptfy library albums list` uses `GET /me/albums`, defaults to 10, and accepts
+1–50 results. Its opaque continuation token is bound to `library-albums`;
+provider response URLs are never followed. Normal output begins with
+`ADDED_AT`, followed by `ID`, `ALBUM`, every credited `ARTIST_IDS` and
+`ARTISTS` value, `RELEASE_DATE`, and `TOTAL_TRACKS`. `--id` is pure IDs, while
+`--fields`, `--extended`, and `--include-artwork` follow the standard
+precedence. Artwork remains URL metadata only.
+
+`check`, `add`, and `remove` accept only raw 22-character album IDs, typed
+album URIs, or canonical album URLs. They use the same complete-batch
+validation, first-seen deduplication, 40-URI generic-library request chunks,
+ordered check output, success-only mutation output, and partial-failure
+semantics as saved tracks. Album-specific membership endpoints are not used.
+
 ## Request behavior
 
 - Requests use fixed Spotify account/API origins; continuation data never
@@ -372,17 +392,22 @@ scope-guard timing and hints, and stdout/stderr routing. Provider tests cover
 fixed paths and methods, response validation, check-length mismatch, inherited
 transport behavior, and 40/41/80/81 chunks including later-chunk failure.
 
+### Saved albums
+
+Exercise list bounds, empty pages, album-bound continuation, default and
+selected fields, extended fields, artwork, pure IDs, multi-artist breadcrumbs,
+accepted album reference forms, first-seen deduplication, wrong-kind rejection,
+complete-batch validation, exact scope timing, and stdout/stderr routing.
+Provider tests cover the fixed saved-album list path, generic membership paths,
+response and check-length validation, inherited transport behavior, and
+40/41/80/81 chunks including later-chunk failure.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
 normal Spotify configuration or OS keychain.
 
-## Future roadmap
-
-The following ideas preserve product direction but are not commitments for the
-initial release:
-
-- List, check, add, and remove saved albums.
+## Future boundaries
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the

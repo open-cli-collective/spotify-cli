@@ -162,28 +162,6 @@ func RenderSavedTrackIDs(items []client.SavedTrack) string {
 	return RenderTrackIDs(tracks)
 }
 
-// SavedTrackCheck is one user input and its normalized membership result.
-type SavedTrackCheck struct {
-	Reference string
-	ID        string
-	Saved     bool
-}
-
-// RenderSavedTrackChecks renders saved membership in input order.
-func RenderSavedTrackChecks(checks []SavedTrackCheck) string {
-	var rendered strings.Builder
-	rendered.WriteString("REFERENCE | ID | SAVED\n")
-	for _, check := range checks {
-		rendered.WriteString(cell(check.Reference))
-		rendered.WriteString(" | ")
-		rendered.WriteString(cell(check.ID))
-		rendered.WriteString(" | ")
-		rendered.WriteString(strconv.FormatBool(check.Saved))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
-}
-
 // RenderTrack renders one track as an identity header and paired attributes.
 func RenderTrack(track client.Track, fields []TrackField) string {
 	attributes := make([]detailAttribute, 0, len(fields))

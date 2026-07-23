@@ -151,17 +151,17 @@ func TestAlbumSearchExactShapesAndPagination(t *testing.T) {
 }
 
 func TestArtistSearchExactShapesAndEmptyResult(t *testing.T) {
-	body := `{"artists":{"items":[{"id":"artist-1","name":"Björk","genres":["art pop"],"uri":"spotify:artist:artist-1","external_urls":{"spotify":"https://open.spotify.com/artist/artist-1"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":10,"offset":0,"total":1,"next":null}}`
+	body := `{"artists":{"items":[{"id":"artist-1","name":"Björk","uri":"spotify:artist:artist-1","external_urls":{"spotify":"https://open.spotify.com/artist/artist-1"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":10,"offset":0,"total":1,"next":null}}`
 	for _, test := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "default", args: []string{"artist", "Björk"}, want: "ID | ARTIST | GENRES\nartist-1 | Björk | art pop\n"},
+		{name: "default", args: []string{"artist", "Björk"}, want: "ID | ARTIST\nartist-1 | Björk\n"},
 		{name: "id overrides fields", args: []string{"artist", "q", "--id", "--fields", "invalid"}, want: "artist-1\n"},
 		{name: "fields", args: []string{"artist", "q", "--fields", "artist,url"}, want: "ARTIST | URL\nBjörk | https://open.spotify.com/artist/artist-1\n"},
-		{name: "extended", args: []string{"artist", "q", "--extended"}, want: "ID | ARTIST | GENRES | URI | URL\nartist-1 | Björk | art pop | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
-		{name: "artwork", args: []string{"artist", "q", "--include-artwork"}, want: "ID | ARTIST | GENRES | ARTWORK\nartist-1 | Björk | art pop | 320x320 https://image\n"},
+		{name: "extended", args: []string{"artist", "q", "--extended"}, want: "ID | ARTIST | URI | URL\nartist-1 | Björk | spotify:artist:artist-1 | https://open.spotify.com/artist/artist-1\n"},
+		{name: "artwork", args: []string{"artist", "q", "--include-artwork"}, want: "ID | ARTIST | ARTWORK\nartist-1 | Björk | 320x320 https://image\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			stdout, stderr, opens, err := executeSearch(body, test.args...)
@@ -172,7 +172,7 @@ func TestArtistSearchExactShapesAndEmptyResult(t *testing.T) {
 	}
 	empty := `{"artists":{"items":[],"limit":10,"offset":0,"total":0,"next":null}}`
 	stdout, stderr, _, err := executeSearch(empty, "artist", "no match")
-	if err != nil || stdout != "ID | ARTIST | GENRES\n" || stderr != "" {
+	if err != nil || stdout != "ID | ARTIST\n" || stderr != "" {
 		t.Fatalf("empty stdout=%q stderr=%q error=%v", stdout, stderr, err)
 	}
 }

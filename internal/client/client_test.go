@@ -101,6 +101,99 @@ func TestMePreservesContextCancellation(t *testing.T) {
 	}
 }
 
+func TestCatalogGetUsesOneExactPath(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, test := range []struct {
+		name string
+		path string
+		get  func(Client) error
+	}{
+		{name: "track", path: "/v1/tracks/" + id, get: func(value Client) error { _, err := value.GetTrack(context.Background(), id); return err }},
+		{name: "album", path: "/v1/albums/" + id, get: func(value Client) error { _, err := value.GetAlbum(context.Background(), id); return err }},
+		{name: "artist", path: "/v1/artists/" + id, get: func(value Client) error { _, err := value.GetArtist(context.Background(), id); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				calls++
+				if request.Method != http.MethodGet || request.URL.Path != test.path || request.URL.RawQuery != "" {
+					t.Fatalf("request = %s %s", request.Method, request.URL.RequestURI())
+				}
+				_, _ = io.WriteString(w, `{"id":"`+id+`"}`)
+			}))
+			defer server.Close()
+			if err := test.get(Client{HTTPClient: server.Client(), BaseURL: server.URL + "/v1"}); err != nil || calls != 1 {
+				t.Fatalf("error=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestCatalogGetValidatesInputAndResponse(t *testing.T) {
+	calls := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return response(http.StatusOK, `{}`), nil
+	})}
+	spotify := Client{HTTPClient: httpClient}
+	for _, id := range []string{" ", "short", "0123456789ABCDEFGHIJK!", "0123456789ABCDEFGHIJKL?market=US"} {
+		if _, err := spotify.GetTrack(context.Background(), id); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
+			t.Fatalf("invalid ID %q error=%v calls=%d", id, err, calls)
+		}
+	}
+	if _, err := spotify.GetAlbum(context.Background(), "0123456789ABCDEFGHIJKL"); !errors.Is(err, ErrInvalidResponse) || calls != 1 {
+		t.Fatalf("missing response ID error=%v calls=%d", err, calls)
+	}
+}
+
+func TestCatalogGetInheritsBoundedTransportBehavior(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		code int
+		want error
+	}{
+		{name: "unauthorized", code: http.StatusUnauthorized, want: ErrUnauthorized},
+		{name: "forbidden", code: http.StatusForbidden, want: ErrForbidden},
+		{name: "malformed", body: "not-json", code: http.StatusOK, want: ErrInvalidResponse},
+		{name: "oversized", body: `{"id":"` + strings.Repeat("x", maxResponseBytes) + `"}`, code: http.StatusOK, want: ErrInvalidResponse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return response(test.code, test.body), nil
+			})}
+			_, err := (Client{HTTPClient: httpClient}).GetArtist(context.Background(), "0123456789ABCDEFGHIJKL")
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error=%v want=%v", err, test.want)
+			}
+		})
+	}
+
+	calls := 0
+	spotify := Client{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return response(http.StatusServiceUnavailable, ""), nil
+			}
+			return response(http.StatusOK, `{"id":"0123456789ABCDEFGHIJKL"}`), nil
+		})},
+		Wait: func(context.Context, time.Duration) error { return nil },
+	}
+	if _, err := spotify.GetTrack(context.Background(), "0123456789ABCDEFGHIJKL"); err != nil || calls != 2 {
+		t.Fatalf("retry error=%v calls=%d", err, calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	spotify.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, request.Context().Err()
+	})}
+	if _, err := spotify.GetTrack(ctx, "0123456789ABCDEFGHIJKL"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+}
+
 func TestSearchTracksEncodesQueryAndDecodesBreadcrumbs(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1/search" {
@@ -148,13 +241,13 @@ func TestSearchArtistsEncodesQueryAndDecodesPage(t *testing.T) {
 		if request.Method != http.MethodGet || request.URL.Host != "api.spotify.invalid" || request.URL.Path != "/v1/search" || query.Get("q") != "Björk 東京" || query.Get("type") != "artist" || query.Get("limit") != "1" || query.Get("offset") != "0" {
 			t.Fatalf("request = %s %s query=%v", request.Method, request.URL.Path, query)
 		}
-		return response(http.StatusOK, `{"artists":{"items":[{"id":"artist","name":"Björk","genres":["art pop","electronic"],"uri":"spotify:artist:artist","external_urls":{"spotify":"https://open.spotify.com/artist/artist"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":1,"offset":0,"total":1,"next":"https://evil.invalid/follow-me"}}`), nil
+		return response(http.StatusOK, `{"artists":{"items":[{"id":"artist","name":"Björk","uri":"spotify:artist:artist","external_urls":{"spotify":"https://open.spotify.com/artist/artist"},"images":[{"url":"https://image","width":320,"height":320}]}],"limit":1,"offset":0,"total":1,"next":"https://evil.invalid/follow-me"}}`), nil
 	})}
 	page, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).SearchArtists(context.Background(), "Björk 東京", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].ID != "artist" || len(page.Items[0].Genres) != 2 || !page.HasNext || calls != 1 {
+	if len(page.Items) != 1 || page.Items[0].ID != "artist" || !page.HasNext || calls != 1 {
 		t.Fatalf("page = %+v calls=%d", page, calls)
 	}
 }

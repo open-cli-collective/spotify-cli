@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/catalogcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/configcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/mecmd"
@@ -130,5 +131,11 @@ func New(deps Dependencies) *cobra.Command {
 		},
 		Backend: &backend,
 	}))
+	cmd.AddCommand(catalogcmd.New(catalogcmd.Dependencies{
+		OpenSession: func(ctx context.Context, backend string, backendSet bool) (catalogcmd.Session, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		Backend: &backend,
+	})...)
 	return cmd
 }

@@ -100,6 +100,17 @@ func RenderTrackIDs(tracks []client.Track) string {
 	return rendered.String()
 }
 
+// RenderTrack renders one track as an identity header and paired attributes.
+func RenderTrack(track client.Track, fields []TrackField) string {
+	attributes := make([]detailAttribute, 0, len(fields))
+	for _, field := range fields {
+		if field != TrackID && field != TrackName {
+			attributes = append(attributes, detailAttribute{key: detailKey(string(field)), value: trackCell(track, field)})
+		}
+	}
+	return renderDetail(track.ID, track.Name, attributes)
+}
+
 func trackCell(track client.Track, field TrackField) string {
 	switch field {
 	case TrackID:

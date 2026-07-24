@@ -20,6 +20,10 @@ import (
 )
 
 const (
+	// ScopePlaylistModifyPrivate permits private playlist mutations.
+	ScopePlaylistModifyPrivate = "playlist-modify-private"
+	// ScopePlaylistModifyPublic permits public playlist mutations.
+	ScopePlaylistModifyPublic = "playlist-modify-public"
 	// ScopePlaylistReadCollaborative permits collaborative playlist reads.
 	ScopePlaylistReadCollaborative = "playlist-read-collaborative"
 	// ScopePlaylistReadPrivate permits private playlist reads.
@@ -50,7 +54,7 @@ var (
 )
 
 func requestedScopes() []string {
-	return []string{ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
+	return []string{ScopePlaylistModifyPrivate, ScopePlaylistModifyPublic, ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
 }
 
 // Endpoints selects Spotify OAuth endpoints. Production uses the zero value.
@@ -208,7 +212,7 @@ func waitForCallback(ctx context.Context, listener net.Listener, rawRedirect, ex
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- server.Serve(listener) }()
-	defer func() { _ = server.Close() }()
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	waitContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

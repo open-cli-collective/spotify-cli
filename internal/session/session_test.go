@@ -190,6 +190,31 @@ func TestSessionDelegatesPlaylistReads(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesPlaylistMutations(t *testing.T) {
+	const (
+		playlistID = "0123456789ABCDEFGHIJKL"
+		trackID    = "abcdefghijklmnopqrstuv"
+	)
+	var requests []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		return response(http.StatusOK, `{"snapshot_id":"next"}`), nil
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	position := 1
+	uri := "spotify:track:" + trackID
+	if snapshot, err := authenticated.AddPlaylistItems(context.Background(), playlistID, []string{uri}, &position); err != nil || snapshot != "next" {
+		t.Fatalf("add snapshot=%q error=%v", snapshot, err)
+	}
+	if snapshot, err := authenticated.RemovePlaylistItemsByURI(context.Background(), playlistID, uri, "before"); err != nil || snapshot != "next" {
+		t.Fatalf("remove snapshot=%q error=%v", snapshot, err)
+	}
+	want := "POST /v1/playlists/" + playlistID + "/items,DELETE /v1/playlists/" + playlistID + "/items"
+	if strings.Join(requests, ",") != want {
+		t.Fatalf("requests=%v want=%s", requests, want)
+	}
+}
+
 func TestSessionDelegatesSavedAlbums(t *testing.T) {
 	const (
 		album  = "0123456789ABCDEFGHIJKL"

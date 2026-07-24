@@ -267,6 +267,20 @@ func RenderPlaylistItemIDs(items []client.PlaylistItem) string {
 	return rendered.String()
 }
 
+// RenderPlaylistItemsAdded renders one reversible playlist-add record.
+func RenderPlaylistItemsAdded(playlistID string, position, count int, snapshotID string) string {
+	return strings.Join([]string{"added", mutationCell(playlistID), strconv.Itoa(position), strconv.Itoa(count), mutationCell(snapshotID)}, "\t") + "\n"
+}
+
+// RenderPlaylistItemRemoved renders one reversible playlist-remove record.
+func RenderPlaylistItemRemoved(playlistID string, position int, trackID, snapshotID string) string {
+	return strings.Join([]string{"removed", mutationCell(playlistID), strconv.Itoa(position), mutationCell(trackID), mutationCell(snapshotID)}, "\t") + "\n"
+}
+
+func mutationCell(value string) string {
+	return strings.ReplaceAll(cell(value), "\t", " ")
+}
+
 func playlistItemCell(item client.PlaylistItem, position int, field PlaylistItemField) string {
 	switch field {
 	case PlaylistItemPosition:

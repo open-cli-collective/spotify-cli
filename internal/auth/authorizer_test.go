@@ -27,7 +27,7 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 		}
 		tokenRequest = r.Form
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"access-secret","token_type":"Bearer","refresh_token":"refresh-secret","expires_in":3600,"scope":"user-read-private user-library-read user-library-modify playlist-read-private playlist-read-collaborative"}`))
+		_, _ = w.Write([]byte(`{"access_token":"access-secret","token_type":"Bearer","refresh_token":"refresh-secret","expires_in":3600,"scope":"user-read-private user-library-read user-library-modify playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private"}`))
 	}))
 	defer server.Close()
 
@@ -62,11 +62,11 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 	if got.AccessToken != "access-secret" || got.RefreshToken != "refresh-secret" {
 		t.Fatalf("token = %+v", got)
 	}
-	if want := []string{ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}; !slices.Equal(got.Scopes, want) {
+	if want := []string{ScopePlaylistModifyPrivate, ScopePlaylistModifyPublic, ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}; !slices.Equal(got.Scopes, want) {
 		t.Fatalf("scopes = %v, want %v", got.Scopes, want)
 	}
 	if authURL == nil || authURL.Query().Get("code_challenge_method") != "S256" ||
-		authURL.Query().Get("scope") != "playlist-read-collaborative playlist-read-private user-library-modify user-library-read user-read-private" {
+		authURL.Query().Get("scope") != "playlist-modify-private playlist-modify-public playlist-read-collaborative playlist-read-private user-library-modify user-library-read user-read-private" {
 		t.Fatalf("authorization URL = %v", authURL)
 	}
 	redirect := authURL.Query().Get("redirect_uri")
@@ -84,13 +84,39 @@ func TestAuthorizeUsesDynamicLoopbackPKCEAndExactRedirect(t *testing.T) {
 	}
 }
 
+func TestWaitForCallbackFlushesSuccessResponse(t *testing.T) {
+	listener, redirect, err := listenRedirect("http://127.0.0.1/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan callbackResult, 1)
+	go func() {
+		code, callbackErr := waitForCallback(context.Background(), listener, redirect, "expected", time.Second)
+		result <- callbackResult{code: code, err: callbackErr}
+	}()
+
+	response, err := http.Get(redirect + "?code=authorization-code&state=expected") // #nosec G107 -- test callback URL is bound to loopback.
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || string(body) != "Authorization complete. Return to the terminal.\n" {
+		t.Fatalf("status=%d body=%q error=%v", response.StatusCode, body, readErr)
+	}
+	callback := <-result
+	if callback.err != nil || callback.code != "authorization-code" {
+		t.Fatalf("callback=%+v", callback)
+	}
+}
+
 func TestOAuthConfigOwnsItsExactScopes(t *testing.T) {
 	authorizer := Authorizer{}
 	first := authorizer.oauthConfig("client-id", "http://127.0.0.1/callback")
 	first.Scopes[0] = "mutated"
 
 	second := authorizer.oauthConfig("client-id", "http://127.0.0.1/callback")
-	want := []string{ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
+	want := []string{ScopePlaylistModifyPrivate, ScopePlaylistModifyPublic, ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
 	if !slices.Equal(second.Scopes, want) {
 		t.Fatalf("scopes = %v, want %v", second.Scopes, want)
 	}

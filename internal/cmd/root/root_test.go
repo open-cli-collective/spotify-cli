@@ -316,7 +316,10 @@ func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
 	encoded, err := token.Encode(token.Envelope{
 		AccessToken: "access", TokenType: "Bearer", RefreshToken: "refresh",
 		ExpiresAt: time.Now().UTC().Add(time.Hour),
-		Scopes:    []string{auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate},
+		Scopes: []string{
+			auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic,
+			auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate,
+		},
 	}, h.deps.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +338,11 @@ func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
 		case "/v1/playlists/" + id:
 			_, _ = io.WriteString(writer, `{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}`)
 		case "/v1/playlists/" + id + "/items":
-			_, _ = io.WriteString(writer, `{"items":[{"added_at":"2026-07-24T12:00:00Z","added_by":{"id":"owner-1"},"is_local":false,"item":{"type":"track","id":"abcdefghijklmnopqrstuv","name":"Song","artists":[{"id":"1111111111111111111111","name":"Artist"}],"album":{"id":"2222222222222222222222","name":"Album","images":[]},"duration_ms":61000}}],"limit":10,"offset":0,"total":1,"next":null}`)
+			if request.Method == http.MethodPost {
+				_, _ = io.WriteString(writer, `{"snapshot_id":"after-add"}`)
+			} else {
+				_, _ = io.WriteString(writer, `{"items":[{"added_at":"2026-07-24T12:00:00Z","added_by":{"id":"owner-1"},"is_local":false,"item":{"type":"track","id":"abcdefghijklmnopqrstuv","name":"Song","artists":[{"id":"1111111111111111111111","name":"Artist"}],"album":{"id":"2222222222222222222222","name":"Album","images":[]},"duration_ms":61000}}],"limit":10,"offset":0,"total":1,"next":null}`)
+			}
 		default:
 			http.NotFound(writer, request)
 		}
@@ -366,7 +373,14 @@ func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
 	if h.out.String() != wantItems || h.errOut.Len() != 0 {
 		t.Fatalf("items stdout=%q stderr=%q", h.out.String(), h.errOut.String())
 	}
-	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items?additional_types=episode&limit=10&offset=0" {
+	h.out.Reset()
+	if err := h.execute("playlists", "items", "add", id, "abcdefghijklmnopqrstuv", "--position", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if h.out.String() != "added\t"+id+"\t1\t1\tafter-add\n" || h.errOut.Len() != 0 {
+		t.Fatalf("add stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items?additional_types=episode&limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items" {
 		t.Fatalf("paths=%v", paths)
 	}
 }

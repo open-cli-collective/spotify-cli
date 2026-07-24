@@ -77,7 +77,6 @@ func (session *fakeSession) ListPlaylistItems(_ context.Context, id string, limi
 		Limit: limit, Offset: offset, HasNext: session.hasNext,
 	}, nil
 }
-
 func TestPlaylistListShapeFlags(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -277,13 +276,36 @@ func TestPlaylistItemsListValidatesBeforeSession(t *testing.T) {
 	}
 }
 
-func execute(session *fakeSession, args ...string) (string, string, int, error) {
+func execute(session ReadSession, args ...string) (string, string, int, error) {
 	opens := 0
-	command := &cobra.Command{Use: "sptfy"}
-	command.AddCommand(New(Dependencies{OpenSession: func(context.Context, string, bool) (Session, error) {
+	stdout, stderr, err := executeWithDependencies(Dependencies{OpenReadSession: func(context.Context, string, bool) (ReadSession, error) {
 		opens++
 		return session, nil
-	}}))
+	}}, args...)
+	return stdout, stderr, opens, err
+}
+
+func executeAdd(session AddSession, args ...string) (string, string, int, error) {
+	opens := 0
+	stdout, stderr, err := executeWithDependencies(Dependencies{OpenAddSession: func(context.Context, string, bool) (AddSession, error) {
+		opens++
+		return session, nil
+	}}, args...)
+	return stdout, stderr, opens, err
+}
+
+func executeRemove(session RemoveSession, args ...string) (string, string, int, error) {
+	opens := 0
+	stdout, stderr, err := executeWithDependencies(Dependencies{OpenRemoveSession: func(context.Context, string, bool) (RemoveSession, error) {
+		opens++
+		return session, nil
+	}}, args...)
+	return stdout, stderr, opens, err
+}
+
+func executeWithDependencies(deps Dependencies, args ...string) (string, string, error) {
+	command := &cobra.Command{Use: "sptfy"}
+	command.AddCommand(New(deps))
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
@@ -291,5 +313,5 @@ func execute(session *fakeSession, args ...string) (string, string, int, error) 
 	command.SilenceUsage = true
 	command.SetArgs(args)
 	err := command.Execute()
-	return stdout.String(), stderr.String(), opens, err
+	return stdout.String(), stderr.String(), err
 }

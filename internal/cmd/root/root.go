@@ -146,7 +146,13 @@ func New(deps Dependencies) *cobra.Command {
 		Backend: &backend,
 	}))
 	cmd.AddCommand(playlistcmd.New(playlistcmd.Dependencies{
-		OpenSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.Session, error) {
+		OpenReadSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.ReadSession, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		OpenAddSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.AddSession, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		OpenRemoveSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.RemoveSession, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
 		Backend: &backend,

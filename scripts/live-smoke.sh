@@ -12,6 +12,11 @@ IFS=, read -r -a playlist_expected_item_ids <<<"$SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_
 for playlist_item_id in "${playlist_expected_item_ids[@]}"; do
   [[ $playlist_item_id =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS must contain only 22-character Spotify IDs' >&2; exit 2; }
 done
+[[ ${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:-} =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID must be a 22-character Spotify ID' >&2; exit 2; }
+for playlist_item_id in "${playlist_expected_item_ids[@]}"; do
+  [[ $SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID != "$playlist_item_id" ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID must be distinct from the configured prefix' >&2; exit 2; }
+done
+printf -v playlist_prefix_ids '%s\n%s\n%s' "${playlist_expected_item_ids[0]}" "${playlist_expected_item_ids[1]}" "${playlist_expected_item_ids[2]}"
 live_dry=${SPOTIFY_CLI_LIVE_DRY_RUN:-0}
 if [[ $live_dry != 1 ]]; then
   [[ -t 0 ]] || { printf '%s\n' 'the live smoke requires an interactive terminal' >&2; exit 2; }
@@ -29,6 +34,49 @@ library_restore_needed=0
 library_album_id=
 library_album_original_saved=
 library_album_restore_needed=0
+playlist_restore_needed=0
+playlist_baseline_ids=
+playlist_inserted_ids=
+playlist_mutation_started_at=0
+read_full_playlist_item_ids() {
+  local first_out="$SPOTIFY_CLI_LIVE_ROOT/full-items-first.out"
+  local first_err="$SPOTIFY_CLI_LIVE_ROOT/full-items-first.err"
+  local next_out="$SPOTIFY_CLI_LIVE_ROOT/full-items-next.out"
+  local next_err="$SPOTIFY_CLI_LIVE_ROOT/full-items-next.err"
+  "$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 50 >"$first_out" 2>"$first_err" || return 1
+  local next_token
+  next_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$first_err")
+  if [[ -z $next_token ]]; then
+    [[ ! -s $first_err ]] || return 1
+    cat "$first_out"
+    return
+  fi
+  "$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 50 --next-page-token "$next_token" >"$next_out" 2>"$next_err" || return 1
+  [[ ! -s $next_err ]] || return 1
+  cat "$first_out" "$next_out"
+}
+wait_for_playlist_write_settle() {
+  [[ $live_dry == 1 ]] && return
+  local now remaining
+  now=$(date +%s)
+  remaining=$((playlist_mutation_started_at + 75 - now))
+  if [[ $remaining -gt 0 ]]; then
+    sleep "$remaining"
+  fi
+}
+wait_for_playlist_item_ids() {
+  local expected=$1 current attempt
+  for attempt in 1 2 3 4 5 6 7; do
+    current=$(read_full_playlist_item_ids 2>/dev/null) || current=
+    if [[ $current == "$expected" ]]; then
+      printf '%s' "$current"
+      return
+    fi
+    [[ $live_dry == 1 ]] && break
+    sleep 5
+  done
+  return 1
+}
 cleanup() {
   live_status=$?
   trap - EXIT HUP INT TERM
@@ -56,6 +104,22 @@ cleanup() {
         printf 'warning: failed to restore original saved-album membership for %s\n' "$library_album_id" >&2
         live_status=1
       fi
+    fi
+  fi
+  if [[ $playlist_restore_needed == 1 ]]; then
+    playlist_current_ids=$(read_full_playlist_item_ids 2>/dev/null) || playlist_current_ids=
+    wait_for_playlist_write_settle
+    playlist_current_ids=$(read_full_playlist_item_ids 2>/dev/null) || playlist_current_ids=
+    if [[ $playlist_current_ids == "$playlist_inserted_ids" ]]; then
+      if ! "$SPTFY" --backend file playlists items remove "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1 >/dev/null 2>&1; then
+        playlist_current_ids=
+      else
+        playlist_current_ids=$(wait_for_playlist_item_ids "$playlist_baseline_ids") || playlist_current_ids=
+      fi
+    fi
+    if [[ $playlist_current_ids != "$playlist_baseline_ids" ]]; then
+      printf '%s\n' 'warning: failed to restore the exact playlist baseline' >&2
+      live_status=1
     fi
   fi
   rm -rf -- "$SPOTIFY_CLI_LIVE_ROOT"
@@ -91,7 +155,7 @@ fi
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID"
 me_out=$("$SPTFY" --backend file me)
 grep -q '^account_id' <<<"$me_out"
-grep -Fxq $'scopes\tplaylist-read-collaborative,playlist-read-private,user-library-modify,user-library-read,user-read-private' <<<"$me_out"
+grep -Fxq $'scopes\tplaylist-modify-private,playlist-modify-public,playlist-read-collaborative,playlist-read-private,user-library-modify,user-library-read,user-read-private' <<<"$me_out"
 ordinary_out=$("$SPTFY" --backend file search track a --max 10)
 [[ $(wc -l <<<"$ordinary_out") -gt 1 ]] || { printf '%s\n' 'ordinary search returned no rows' >&2; exit 1; }
 live_nonce=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
@@ -140,6 +204,22 @@ playlist_fixture_ids=$("$SPTFY" --backend file playlists list --id --max 50)
 grep -Fxq "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" <<<"$playlist_fixture_ids" || { printf '%s\n' 'configured playlist fixture was not listed' >&2; exit 1; }
 [[ $("$SPTFY" --backend file playlists get "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id) == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist get returned an unexpected ID' >&2; exit 1; }
 
+playlist_baseline_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-baseline.out"
+playlist_baseline_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-baseline.err"
+"$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 50 >"$playlist_baseline_out" 2>"$playlist_baseline_err"
+[[ ! -s $playlist_baseline_err ]] || { printf '%s\n' 'playlist baseline exceeds one 50-item page' >&2; exit 1; }
+playlist_baseline_count=$(wc -l <"$playlist_baseline_out" | tr -d ' ')
+[[ $playlist_baseline_count -ge 3 ]] || { printf '%s\n' 'playlist baseline has fewer than three items' >&2; exit 1; }
+for playlist_prefix_index in 1 2 3; do
+  [[ $(sed -n "${playlist_prefix_index}p" "$playlist_baseline_out") == "${playlist_expected_item_ids[playlist_prefix_index-1]}" ]] || { printf '%s\n' 'playlist baseline does not match the configured three-item prefix' >&2; exit 1; }
+done
+if grep -Fxq "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" "$playlist_baseline_out"; then
+  printf '%s\n' 'playlist mutation track is already present in the runtime baseline' >&2
+  exit 1
+fi
+playlist_baseline_ids=$(<"$playlist_baseline_out")
+playlist_inserted_ids=$(sed -n '1p' "$playlist_baseline_out"; printf '%s\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID"; sed -n '2,$p' "$playlist_baseline_out")
+
 playlist_items_page_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.out"
 playlist_items_page_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.err"
 "$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --max 2 >"$playlist_items_page_out" 2>"$playlist_items_page_err"
@@ -153,14 +233,45 @@ playlist_items_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "
 playlist_items_next_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-next.out"
 playlist_items_next_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-next.err"
 "$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --max 2 --next-page-token "$playlist_items_token" >"$playlist_items_next_out" 2>"$playlist_items_next_err"
-[[ ! -s $playlist_items_next_err ]] || { printf '%s\n' 'playlist item continuation emitted unexpected stderr' >&2; exit 1; }
-[[ $(wc -l <"$playlist_items_next_out") -eq 3 ]] || { printf '%s\n' 'playlist item continuation did not return exactly one row' >&2; exit 1; }
+playlist_items_next_rows=1
+if [[ $playlist_baseline_count -ge 4 ]]; then
+  playlist_items_next_rows=2
+fi
+[[ $(wc -l <"$playlist_items_next_out") -eq $((playlist_items_next_rows + 2)) ]] || { printf '%s\n' 'playlist item continuation returned an unexpected row count' >&2; exit 1; }
 [[ $(sed -n '1p' "$playlist_items_next_out") == "Playlist ID: $SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist item continuation returned an unexpected parent' >&2; exit 1; }
 [[ $(sed -n '2p' "$playlist_items_next_out") == 'POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION' ]] || { printf '%s\n' 'playlist item continuation returned an unexpected shape' >&2; exit 1; }
 [[ $(awk -F ' \\| ' 'NR == 3 {print $1":"$3}' "$playlist_items_next_out") == "2:${playlist_expected_item_ids[2]}" ]] || { printf '%s\n' 'playlist item continuation did not resume at position two' >&2; exit 1; }
+if [[ $playlist_baseline_count -ge 4 ]]; then
+  [[ $(awk -F ' \\| ' 'NR == 4 {print $1":"$3}' "$playlist_items_next_out") == "3:$(sed -n '4p' "$playlist_baseline_out")" ]] || { printf '%s\n' 'playlist item continuation position three did not match the baseline' >&2; exit 1; }
+fi
+playlist_items_next_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$playlist_items_next_err")
+if [[ $playlist_baseline_count -gt 4 ]]; then
+  [[ -n $playlist_items_next_token ]] || { printf '%s\n' 'playlist item continuation omitted its next-page token' >&2; exit 1; }
+else
+  [[ ! -s $playlist_items_next_err ]] || { printf '%s\n' 'playlist item continuation emitted unexpected stderr' >&2; exit 1; }
+fi
 playlist_items_ids=$("$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 3)
-printf -v playlist_expected_ids '%s\n%s\n%s' "${playlist_expected_item_ids[0]}" "${playlist_expected_item_ids[1]}" "${playlist_expected_item_ids[2]}"
-[[ $playlist_items_ids == "$playlist_expected_ids" ]] || { printf '%s\n' 'playlist item ID-only order did not match normal output' >&2; exit 1; }
+[[ $playlist_items_ids == "$playlist_prefix_ids" ]] || { printf '%s\n' 'playlist item ID-only prefix did not match normal output' >&2; exit 1; }
+if [[ $live_dry != 1 ]]; then
+  go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^TestPlaylistDuplicateURIRemovalContract$' -count=1
+fi
+
+playlist_restore_needed=1
+playlist_mutation_started_at=$(date +%s)
+playlist_add_out=$("$SPTFY" --backend file playlists items add "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" --position 1)
+IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_count playlist_record_snapshot playlist_record_extra <<<"$playlist_add_out"
+[[ $playlist_action == added && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_count == 1 && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'playlist add returned an unexpected record' >&2; exit 1; }
+playlist_items_ids=$(read_full_playlist_item_ids)
+[[ $playlist_items_ids == "$playlist_inserted_ids" ]] || { printf '%s\n' 'playlist add did not preserve the expected middle order' >&2; exit 1; }
+wait_for_playlist_write_settle
+playlist_items_ids=$(read_full_playlist_item_ids)
+[[ $playlist_items_ids == "$playlist_inserted_ids" ]] || { printf '%s\n' 'playlist changed during the provider write-settling window' >&2; exit 1; }
+playlist_remove_out=$("$SPTFY" --backend file playlists items remove "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1)
+IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_track playlist_record_snapshot playlist_record_extra <<<"$playlist_remove_out"
+[[ $playlist_action == removed && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_track == "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'playlist remove returned an unexpected record' >&2; exit 1; }
+playlist_items_ids=$(wait_for_playlist_item_ids "$playlist_baseline_ids") || playlist_items_ids=
+[[ $playlist_items_ids == "$playlist_baseline_ids" ]] || { printf '%s\n' 'playlist mutation round trip did not restore the exact baseline' >&2; exit 1; }
+playlist_restore_needed=0
 
 track_id=11dFghVXANMlKmJXsNCbNl
 album_id=4aawyAB9vmqN3uQ7FjRGTy

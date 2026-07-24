@@ -129,3 +129,12 @@ func TestPlaylistItemExtendedAndEmptyRendering(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestPlaylistMutationRecordsAreCompactAndSanitized(t *testing.T) {
+	if got := RenderPlaylistItemsAdded("playlist\tID", 2, 101, "next\nsnapshot"); got != "added\tplaylist ID\t2\t101\tnext snapshot\n" {
+		t.Fatalf("add=%q", got)
+	}
+	if got := RenderPlaylistItemRemoved("playlist", 2, "track\tID", "next\r\nsnapshot"); got != "removed\tplaylist\t2\ttrack ID\tnext snapshot\n" {
+		t.Fatalf("remove=%q", got)
+	}
+}

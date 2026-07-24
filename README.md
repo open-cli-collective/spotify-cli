@@ -45,9 +45,10 @@ OAuth token in the configured credential backend. Setup messages and the
 authorization URL go to stderr. `me` writes the authenticated identity and
 granted scopes to stdout.
 
-Authorization requests `playlist-read-collaborative`, `playlist-read-private`,
-`user-library-modify`, `user-library-read`, and `user-read-private`. Replace
-older credentials with `sptfy init --overwrite`.
+Authorization requests `playlist-modify-private`, `playlist-modify-public`,
+`playlist-read-collaborative`, `playlist-read-private`, `user-library-modify`,
+`user-library-read`, and `user-read-private`. Replace older credentials with
+`sptfy init --overwrite`.
 
 For a prompt-free setup, supply `--non-interactive`. Use `--no-browser` to
 open the printed URL yourself, or `--auth-code-stdin` to paste the complete
@@ -127,6 +128,8 @@ matching URI, or canonical URL:
 sptfy playlists list --max 10
 sptfy playlists get spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
 sptfy playlists items list spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
+sptfy playlists items add spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID TRACK_ID --position 1
+sptfy playlists items remove spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID 1
 ```
 
 Lists default to 10 and allow 1–50 results. Default fields are
@@ -140,9 +143,35 @@ Playlist-item lists preserve Spotify order and print the playlist ID once,
 followed by `POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID |
 ALBUM | DURATION`. Positions are absolute and zero-based across continuation
 pages. Track, episode, local, unavailable, and future item shapes remain
-distinct; `--id` emits only entries with Spotify IDs. Playlist mutations are
-not implemented. Spotify currently exposes playlist details and items only
-when the current user owns or collaborates on the playlist.
+distinct; `--id` emits only entries with Spotify IDs. Spotify currently
+exposes playlist details and items only when the current user owns or
+collaborates on the playlist.
+
+Playlist add accepts one or more raw track IDs, track URIs, or canonical track
+URLs. It preserves argument order and duplicates, appends by default, and
+accepts `--position` from zero through the current item count. Batches larger
+than 100 use ordered requests. Remove accepts one absolute zero-based position;
+it refuses non-track items and duplicate track URIs because Spotify's current
+removal operation is URI-based rather than position-based. Both commands
+require the two read and two modify scopes and emit reversible, headerless tab
+records for applied mutations:
+
+```text
+added<TAB>playlist-id<TAB>start-position<TAB>count<TAB>snapshot-id
+removed<TAB>playlist-id<TAB>position<TAB>track-id<TAB>snapshot-id
+```
+
+The add record retains the position and count needed for an inverse operation.
+Repeated guarded remove at `start-position` is directly usable only while each
+inserted track ID is unique in the playlist; intentional or preexisting
+duplicates must first be made unique by another Spotify client. The remove
+record can be inverted by adding `track-id` at `position`. If a later add chunk
+is definitely rejected, the confirmed-prefix record is emitted and the command
+exits nonzero; a first-chunk definite rejection emits no record. When transport
+or a successful but invalid response makes an add or remove outcome uncertain,
+the command emits no stdout record and its nonzero error says to inspect and
+reconcile before retrying. The uncertain change may have applied. Remove emits
+a stdout record only after confirmed success.
 
 ## Saved tracks
 
@@ -199,15 +228,28 @@ SPOTIFY_CLI_LIVE=1 \
 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
 SPOTIFY_CLI_LIVE_PLAYLIST_ID=your_playlist_id \
 SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=first_item_id,second_item_id,third_item_id \
+SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=a_distinct_track_id \
 SPOTIFY_CLIENT_ID=your_client_id \
 make live-smoke
 ```
+
+`SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS` is a known ordered three-ID prefix, not the
+entire playlist. Before mutating, the harness captures one complete runtime page
+of up to 50 IDs, requires that prefix and an absent mutation track, and uses the
+captured sequence for exact restoration.
 
 The harness is interactive because Spotify authorization opens a browser. It
 exercises setup, identity, refresh, search/pagination shapes, catalog gets,
 relationship traversals, playlist list/get, ordered playlist-item pagination,
 replacement, clear, and re-initialization without exporting the stored OAuth
 credential.
+
+The real-only provider-contract probe temporarily inserts the distinct mutation
+track twice, waits through Spotify's bounded write-settling window, demonstrates
+that one URI removal removes both occurrences, and polls for exact baseline
+restoration. That build-tagged probe owns best-effort cleanup for test failures;
+abrupt process termination during the probe is outside its guarantee. The shell
+trap separately protects the command round trip on failure or interruption.
 
 ## License
 

@@ -41,6 +41,20 @@ type Client struct {
 	Wait       func(context.Context, time.Duration) error
 }
 
+// MutationOutcomeUncertainError reports a request that may have taken effect.
+type MutationOutcomeUncertainError struct {
+	Cause  error
+	Method string
+	Path   string
+}
+
+func (err *MutationOutcomeUncertainError) Error() string {
+	return "spotify mutation outcome is uncertain; inspect current state before retrying"
+}
+
+// Unwrap returns the post-send failure.
+func (err *MutationOutcomeUncertainError) Unwrap() error { return err.Cause }
+
 // User is the stable identity returned by Spotify's current-user endpoint.
 type User struct {
 	AccountID   string `json:"account_id"`
@@ -389,6 +403,55 @@ func (client Client) ListPlaylistItems(ctx context.Context, id string, limit, of
 		Items: items, Offset: response.Offset, Limit: response.Limit,
 		Total: response.Total, HasNext: hasNext,
 	}, nil
+}
+
+type playlistSnapshotResponse struct {
+	SnapshotID string `json:"snapshot_id"`
+}
+
+type playlistItemReference struct {
+	URI string `json:"uri"`
+}
+
+// AddPlaylistItems adds one ordered batch of tracks and returns the new snapshot.
+func (client Client) AddPlaylistItems(ctx context.Context, id string, uris []string, position *int) (string, error) {
+	if !spotifyref.ValidID(id) || len(uris) > 100 || !validLibraryURIs(spotifyref.Track, uris) ||
+		position != nil && *position < 0 {
+		return "", ErrInvalidResponse
+	}
+	body := struct {
+		URIs     []string `json:"uris"`
+		Position *int     `json:"position,omitempty"`
+	}{URIs: uris, Position: position}
+	path := "/playlists/" + id + "/items"
+	var response playlistSnapshotResponse
+	if err := client.mutateJSON(ctx, http.MethodPost, path, body, &response); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(response.SnapshotID) == "" {
+		return "", mutationOutcomeUncertain(http.MethodPost, path, ErrInvalidResponse)
+	}
+	return response.SnapshotID, nil
+}
+
+// RemovePlaylistItemsByURI removes every occurrence of one track URI against a known snapshot.
+func (client Client) RemovePlaylistItemsByURI(ctx context.Context, id, uri, snapshotID string) (string, error) {
+	if !spotifyref.ValidID(id) || !validLibraryURIs(spotifyref.Track, []string{uri}) || strings.TrimSpace(snapshotID) == "" {
+		return "", ErrInvalidResponse
+	}
+	body := struct {
+		Items      []playlistItemReference `json:"items"`
+		SnapshotID string                  `json:"snapshot_id"`
+	}{Items: []playlistItemReference{{URI: uri}}, SnapshotID: snapshotID}
+	path := "/playlists/" + id + "/items"
+	var response playlistSnapshotResponse
+	if err := client.mutateJSON(ctx, http.MethodDelete, path, body, &response); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(response.SnapshotID) == "" {
+		return "", mutationOutcomeUncertain(http.MethodDelete, path, ErrInvalidResponse)
+	}
+	return response.SnapshotID, nil
 }
 
 func decodePlaylistItem(wrapper playlistItemWrapper) (PlaylistItem, error) {
@@ -792,6 +855,18 @@ func (client Client) getJSON(ctx context.Context, path string, target any) error
 }
 
 func (client Client) requestJSON(ctx context.Context, method, path string, target any) error {
+	return client.doJSON(ctx, method, path, nil, target)
+}
+
+func (client Client) mutateJSON(ctx context.Context, method, path string, body, target any) error {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return ErrInvalidResponse
+	}
+	return client.doJSON(ctx, method, path, encoded, target)
+}
+
+func (client Client) doJSON(ctx context.Context, method, path string, body []byte, target any) error {
 	baseURL := strings.TrimRight(client.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = defaultAPIBaseURL
@@ -800,22 +875,33 @@ func (client Client) requestJSON(ctx context.Context, method, path string, targe
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		request, err := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
+	attempts := maxAttempts
+	if body != nil {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, method, baseURL+path, bytes.NewReader(body))
 		if err != nil {
 			return ErrUpstream
 		}
+		if body != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
 		response, err := httpClient.Do(request)
 		if err != nil {
+			cause := error(transportError{cause: err})
 			if ctx.Err() != nil {
-				return ctx.Err()
+				cause = ctx.Err()
 			}
-			return transportError{cause: err}
+			if body != nil {
+				return mutationOutcomeUncertain(method, path, cause)
+			}
+			return cause
 		}
 		if delay, retry, valid := retryDelay(response, attempt); retry {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBytes))
 			_ = response.Body.Close()
-			if !valid || attempt == maxAttempts-1 {
+			if !valid || attempt == attempts-1 {
 				return ErrUpstream
 			}
 			if err := client.wait(ctx, delay); err != nil {
@@ -835,13 +921,27 @@ func (client Client) requestJSON(ctx context.Context, method, path string, targe
 			_ = response.Body.Close()
 			return ErrUpstream
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+		responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
-		if err != nil || len(body) > maxResponseBytes {
+		if err != nil {
+			if body != nil {
+				return mutationOutcomeUncertain(method, path, errors.Join(ErrInvalidResponse, err))
+			}
 			return ErrInvalidResponse
 		}
-		if target != nil && json.Unmarshal(body, target) != nil {
+		if len(responseBody) > maxResponseBytes {
+			if body != nil {
+				return mutationOutcomeUncertain(method, path, ErrInvalidResponse)
+			}
 			return ErrInvalidResponse
+		}
+		if target != nil {
+			if err := json.Unmarshal(responseBody, target); err != nil {
+				if body != nil {
+					return mutationOutcomeUncertain(method, path, errors.Join(ErrInvalidResponse, err))
+				}
+				return ErrInvalidResponse
+			}
 		}
 		return nil
 	}
@@ -883,4 +983,8 @@ func (err transportError) Error() string { return ErrUpstream.Error() }
 func (err transportError) Unwrap() error { return err.cause }
 func (err transportError) Is(target error) bool {
 	return target == ErrUpstream || errors.Is(err.cause, target)
+}
+
+func mutationOutcomeUncertain(method, path string, cause error) error {
+	return &MutationOutcomeUncertainError{Cause: cause, Method: method, Path: path}
 }

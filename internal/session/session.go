@@ -98,6 +98,16 @@ func (session *Session) ListPlaylistItems(ctx context.Context, id string, limit,
 	return session.client.ListPlaylistItems(ctx, id, limit, offset)
 }
 
+// AddPlaylistItems adds tracks with the authenticated Spotify client.
+func (session *Session) AddPlaylistItems(ctx context.Context, id string, uris []string, position *int) (string, error) {
+	return session.client.AddPlaylistItems(ctx, id, uris, position)
+}
+
+// RemovePlaylistItemsByURI removes every occurrence of one track URI with the authenticated Spotify client.
+func (session *Session) RemovePlaylistItemsByURI(ctx context.Context, id, uri, snapshotID string) (string, error) {
+	return session.client.RemovePlaylistItemsByURI(ctx, id, uri, snapshotID)
+}
+
 // ListSavedTracks lists saved tracks with the authenticated Spotify client.
 func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
 	return session.client.ListSavedTracks(ctx, limit, offset)

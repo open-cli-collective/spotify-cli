@@ -33,6 +33,8 @@ The currently implemented surface contains exactly these commands:
 - `sptfy playlists list`
 - `sptfy playlists get <playlist-reference>`
 - `sptfy playlists items list <playlist-reference>`
+- `sptfy playlists items add <playlist-reference> <track-reference>...`
+- `sptfy playlists items remove <playlist-reference> <zero-based-position>`
 
 The product exclusions under [Future boundaries](#future-boundaries) remain
 directional and non-normative until promoted into command sections.
@@ -41,12 +43,12 @@ directional and non-normative until promoted into command sections.
 
 `sptfy` uses Spotify Authorization Code with PKCE for user authorization. The
 user supplies a Spotify client ID; the CLI never accepts or stores a client
-secret. The CLI requests exactly these sorted scopes:
-`playlist-read-collaborative`, `playlist-read-private`,
-`user-library-modify`, `user-library-read`, and `user-read-private`. Catalog
-reads do not require an additional scope. A credential missing a command's
-required library or playlist scope fails before its Spotify resource request
-with a `sptfy init --overwrite` hint.
+secret. The CLI requests exactly these sorted scopes: `playlist-modify-private`,
+`playlist-modify-public`, `playlist-read-collaborative`,
+`playlist-read-private`, `user-library-modify`, `user-library-read`, and
+`user-read-private`. Catalog reads do not require an additional scope. A
+credential missing a command's required library or playlist scope fails before
+its Spotify resource request with a `sptfy init --overwrite` hint.
 
 OAuth access and refresh material is stored only in a `cli-common/credstore`
 backend under the configured credential reference. It is never stored in the
@@ -341,7 +343,7 @@ canonical playlist URL under the same strict validation used by catalog gets.
 It uses one fixed-origin `GET /playlists/{id}` request. Detail output uses the
 stable identity header, and selected `ID` or `PLAYLIST` fields are not repeated
 below it. Spotify currently permits this read only for playlists the current
-user owns or collaborates on. Every playlist mutation is outside this surface.
+user owns or collaborates on.
 
 ### `sptfy playlists items list <playlist-reference>`
 
@@ -370,6 +372,54 @@ track metadata.
 artwork for tracks and item artwork for episodes. `--fields` follows the
 standard selection precedence. `--id` overrides every other shape flag,
 omits the parent line, and emits only entries with a Spotify ID.
+
+### `sptfy playlists items add <playlist-reference> <track-reference>...`
+
+The command validates the playlist and every track reference before opening a
+session. It preserves argument order and intentional duplicates. With no
+`--position`, tracks append and the reported start position is the playlist's
+current item count. An explicit zero-based position may range from zero through
+that count. The command uses current fixed-origin
+`POST /playlists/{id}/items` requests with `uris` in batches of at most 100;
+positioned later chunks advance by their preceding chunk sizes.
+
+Success emits `added<TAB>playlist-id<TAB>start-position<TAB>count<TAB>snapshot-id`.
+If a later request is definitely rejected, the command emits that record for
+the confirmed prefix and returns a partial-mutation error; a first-request
+definite rejection emits no record. If transport or a successful but invalid
+response makes the current batch outcome uncertain, the command emits no stdout
+record, even for earlier confirmed batches. Its sanitized reconciliation error
+reports the playlist, start/current positions, confirmed and uncertain counts,
+and last confirmed snapshot, and directs inspection before retrying. An
+uncertain batch may have applied.
+The record retains the position and count needed for an inverse operation.
+Repeating guarded remove at the reported position is directly usable only while
+every inserted track ID is
+unique in the playlist; intentional or preexisting duplicates must first be
+made unique by another Spotify client.
+
+### `sptfy playlists items remove <playlist-reference> <zero-based-position>`
+
+The command resolves one absolute position after reading the complete current
+playlist. Unavailable, local, episode, future, and otherwise non-track items are
+rejected. Because Spotify's current `DELETE /playlists/{id}/items` request
+removes by URI and exposes no position, the command also rejects a track URI
+that occurs more than once. Immediately before deletion it rechecks both the
+snapshot and item count; stale state fails without a deletion request.
+
+Success emits `removed<TAB>playlist-id<TAB>position<TAB>track-id<TAB>snapshot-id`.
+Adding the reported track ID at the reported position is the inverse operation.
+If the removal outcome is uncertain, the command emits no stdout record and its
+sanitized reconciliation error reports the playlist position, track ID, and
+prior snapshot. Inspect and reconcile before retrying; the deletion may have
+applied.
+For either mutation, if stdout rejects an applied record, the command exits
+nonzero and stderr includes the full sanitized recovery record while preserving
+any partial-mutation cause. A nonzero remove therefore does not imply that no
+deletion occurred.
+Both mutation commands require both playlist read scopes and both playlist
+modify scopes before any Spotify resource request. Mutation requests are never
+automatically replayed after ambiguous provider failures.
 
 ## Request behavior
 
@@ -482,8 +532,21 @@ untyped items, exact parent/default/selected/extended/artwork/ID-only/empty
 output, and validation before authentication. Provider fixtures prove the
 current `/items` path and `item` member, exact page metadata, nonnegative
 durations, required arrays, present item IDs, fixed origin, and ignored
-provider pagination URLs. The static and opt-in live smokes prove the first
-three configured item IDs, their positions, continuation, and ID-only order.
+provider pagination URLs. The static and opt-in live smokes prove the configured
+three-ID prefix, positions and continuation derived from the runtime item count,
+ID-only order, a middle insertion, and byte-for-byte restoration of the captured
+full baseline after positional removal.
+Mutation tests additionally cover complete validation, insertion boundaries,
+duplicate preservation, 100/101 chunking, full-list duplicate detection,
+non-track rejection, stale snapshots/counts, compact inverse records,
+definite first-request stdout suppression, accepted-prefix output after definite
+partial success, and outcome-uncertain reconciliation without stdout. A
+real-only build-tagged provider probe inserts two occurrences of the distinct
+mutation track, waits through the bounded
+provider write-settling window, proves one current URI removal removes both, and
+polls for exact baseline restoration. The probe owns best-effort exact cleanup
+for test failures, not abrupt process termination. The shell trap separately
+protects the command round trip on failure or interruption.
 
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
@@ -494,6 +557,7 @@ normal Spotify configuration or OS keychain.
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the
-relationship breadcrumbs defined above. Playlist mutations, playback,
-recommendations, podcasts, audiobooks, raw HTTP access, and local media-library
-synchronization remain out of scope until separately specified.
+relationship breadcrumbs defined above. Higher-level playlist replacement,
+batch positional removal, duplicate-URI force removal, episodes, local items,
+playback, recommendations, podcasts, audiobooks, raw HTTP access, and local
+media-library synchronization remain out of scope until separately specified.

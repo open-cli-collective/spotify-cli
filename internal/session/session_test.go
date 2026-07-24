@@ -161,6 +161,29 @@ func TestSessionDelegatesCatalogTraversal(t *testing.T) {
 	}
 }
 
+func TestSessionDelegatesPlaylistReads(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	var paths []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		paths = append(paths, request.URL.RequestURI())
+		if request.URL.Path == "/v1/me/playlists" {
+			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
+		}
+		return response(http.StatusOK, `{"id":"`+id+`","items":{"total":0}}`), nil
+	})}
+	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
+	if _, err := authenticated.ListCurrentUserPlaylists(context.Background(), 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authenticated.GetPlaylist(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	want := "/v1/me/playlists?limit=1&offset=0,/v1/playlists/" + id
+	if strings.Join(paths, ",") != want {
+		t.Fatalf("paths=%v want=%s", paths, want)
+	}
+}
+
 func TestSessionDelegatesSavedAlbums(t *testing.T) {
 	const (
 		album  = "0123456789ABCDEFGHIJKL"

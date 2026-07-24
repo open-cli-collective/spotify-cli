@@ -305,6 +305,62 @@ func TestCatalogTraversalCommandsAreWiredAndValidateBeforeSession(t *testing.T) 
 	}
 }
 
+func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	h := newHarness(t)
+	cfg := config.Default()
+	cfg.ClientID = "client-id"
+	if err := config.Save(h.deps.Scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := token.Encode(token.Envelope{
+		AccessToken: "access", TokenType: "Bearer", RefreshToken: "refresh",
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Scopes:    []string{auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate},
+	}, h.deps.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.store.values["default/oauth_token"] = string(encoded)
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		paths = append(paths, request.URL.RequestURI())
+		if request.Header.Get("Authorization") != "Bearer access" {
+			t.Fatalf("authorization=%q", request.Header.Get("Authorization"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/me/playlists":
+			_, _ = io.WriteString(writer, `{"items":[{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}],"limit":10,"offset":0,"total":1,"next":null}`)
+		case "/v1/playlists/" + id:
+			_, _ = io.WriteString(writer, `{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	h.deps.HTTPClient = server.Client()
+	h.deps.APIBaseURL = server.URL + "/v1"
+
+	if err := h.execute("playlists", "list"); err != nil {
+		t.Fatal(err)
+	}
+	wantList := "ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE\n" + id + " | Mix | owner-1 | Ada | 3 | - | true\n"
+	if h.out.String() != wantList || h.errOut.Len() != 0 {
+		t.Fatalf("list stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+	h.out.Reset()
+	if err := h.execute("playlists", "get", "spotify:playlist:"+id, "--fields", "playlist,owner_id"); err != nil {
+		t.Fatal(err)
+	}
+	if h.out.String() != id+"  Mix\nOwner ID: owner-1\n" || h.errOut.Len() != 0 {
+		t.Fatalf("get stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id {
+		t.Fatalf("paths=%v", paths)
+	}
+}
+
 func TestInitAndMeProductionCompositionRoutesOutput(t *testing.T) {
 	h := newHarness(t)
 	h.deps.Now = func() time.Time { return time.Now().UTC() }

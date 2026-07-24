@@ -34,7 +34,24 @@ elif [[ $args == *" init "* ]]; then
   rm -f "$marker"
 elif [[ $args == *" me "* ]]; then
   [[ ! -f $marker ]] || exit 4
-  printf 'account_id\ttest\nscopes\tuser-library-modify,user-library-read,user-read-private\n'
+  printf 'account_id\ttest\nscopes\tplaylist-read-collaborative,playlist-read-private,user-library-modify,user-library-read,user-read-private\n'
+elif [[ $args == *" playlists list "* ]]; then
+  if [[ $args == *" --id "* ]]; then
+    if [[ $args == *" --max 50 "* ]]; then
+      touch "$XDG_DATA_HOME/playlist-fixture-listed"
+    fi
+    printf '%s\n' "${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?}"
+  else
+    printf 'ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE\n'
+    printf '%s | Mix | owner-1 | Ada | 3 | true | false\n' "${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?}"
+  fi
+  if [[ $args == *" --max 1 "* && $args != *" --next-page-token "* ]]; then
+    printf 'More results available (next: playlist-token)\n' >&2
+  fi
+elif [[ $args == *" playlists get "* ]]; then
+  [[ -f $XDG_DATA_HOME/playlist-fixture-listed ]] || exit 17
+  [[ $args == *" playlists get ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} --id "* ]] || exit 16
+  printf '%s\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID"
 elif [[ $args == *" library tracks list "* ]]; then
   printf 'ADDED_AT | ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
   printf '2026-07-23T12:00:00Z | 11dFghVXANMlKmJXsNCbNl | Song | artist-1 | Artist | album-1 | Album | 1:00\n'
@@ -148,6 +165,8 @@ expect_guard_failure() {
 expect_guard_failure env -u SPOTIFY_CLI_LIVE SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env -u SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env -u SPOTIFY_CLIENT_ID SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" ./scripts/live-smoke.sh
+expect_guard_failure env -u SPOTIFY_CLI_LIVE_PLAYLIST_ID SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
+expect_guard_failure env SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=bad SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 
 for initially_saved in 0 1; do
   smoke_err="$test_root/smoke-$initially_saved.err"
@@ -158,6 +177,7 @@ for initially_saved in 0 1; do
     SPOTIFY_CLI_LIVE_BINARY="$fake" \
     SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
     SPOTIFY_CLI_LIVE_FAKE_INITIAL_ALBUM_SAVED="$initially_saved" \
+    SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL \
     SPOTIFY_CLIENT_ID=test \
     ./scripts/live-smoke.sh >/dev/null 2>"$smoke_err"; then
     sed -n '1,120p' "$smoke_err" >&2
@@ -175,6 +195,7 @@ for initially_saved in 0 1; do
     SPOTIFY_CLI_LIVE_BINARY="$fake" \
     SPOTIFY_CLI_LIVE_FAKE_INITIAL_SAVED="$initially_saved" \
     SPOTIFY_CLI_LIVE_FAKE_FAIL_RESTORE=1 \
+    SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL \
     SPOTIFY_CLIENT_ID=test \
     ./scripts/live-smoke.sh >/dev/null 2>"$restore_err"; then
     printf '%s\n' 'live harness unexpectedly ignored a restoration failure' >&2

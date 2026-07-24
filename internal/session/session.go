@@ -83,6 +83,16 @@ func (session *Session) ListArtistAlbums(ctx context.Context, id string, limit, 
 	return session.client.ListArtistAlbums(ctx, id, limit, offset)
 }
 
+// ListCurrentUserPlaylists lists the current user's playlists with the authenticated Spotify client.
+func (session *Session) ListCurrentUserPlaylists(ctx context.Context, limit, offset int) (client.PlaylistPage, error) {
+	return session.client.ListCurrentUserPlaylists(ctx, limit, offset)
+}
+
+// GetPlaylist returns one playlist with the authenticated Spotify client.
+func (session *Session) GetPlaylist(ctx context.Context, id string) (client.Playlist, error) {
+	return session.client.GetPlaylist(ctx, id)
+}
+
 // ListSavedTracks lists saved tracks with the authenticated Spotify client.
 func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
 	return session.client.ListSavedTracks(ctx, limit, offset)

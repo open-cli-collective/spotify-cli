@@ -13,6 +13,8 @@ func TestParse(t *testing.T) {
 		{name: "raw track ID", kind: Track, value: id, want: id},
 		{name: "album URI", kind: Album, value: "spotify:album:" + id, want: id},
 		{name: "artist URL", kind: Artist, value: "https://open.spotify.com/artist/" + id, want: id},
+		{name: "playlist URI", kind: Playlist, value: "spotify:playlist:" + id, want: id},
+		{name: "playlist URL", kind: Playlist, value: "https://open.spotify.com/playlist/" + id, want: id},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := Parse(test.value, test.kind)
@@ -20,6 +22,21 @@ func TestParse(t *testing.T) {
 				t.Fatalf("Parse() = %q, %v; want %q", got, err, test.want)
 			}
 		})
+	}
+}
+
+func TestParsePlaylistRejectsWrongKindAndHostileURLs(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
+	for _, value := range []string{
+		"spotify:album:" + id,
+		"https://open.spotify.com/album/" + id,
+		"https://evil.example/playlist/" + id,
+		"https://open.spotify.com/playlist/" + id + "?si=secret",
+		"https://user@open.spotify.com/playlist/" + id,
+	} {
+		if _, err := Parse(value, Playlist); err == nil {
+			t.Fatalf("Parse(%q) succeeded", value)
+		}
 	}
 }
 

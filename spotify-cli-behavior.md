@@ -30,6 +30,8 @@ The currently implemented surface contains exactly these commands:
 - `sptfy library albums check <album-reference>...`
 - `sptfy library albums add <album-reference>...`
 - `sptfy library albums remove <album-reference>...`
+- `sptfy playlists list`
+- `sptfy playlists get <playlist-reference>`
 
 The product exclusions under [Future boundaries](#future-boundaries) remain
 directional and non-normative until promoted into command sections.
@@ -38,10 +40,12 @@ directional and non-normative until promoted into command sections.
 
 `sptfy` uses Spotify Authorization Code with PKCE for user authorization. The
 user supplies a Spotify client ID; the CLI never accepts or stores a client
-secret. The CLI requests exactly these sorted scopes: `user-library-modify`,
-`user-library-read`, and `user-read-private`. Catalog reads do not require an
-additional scope. A credential missing a command's library scope fails before
-its Spotify resource request with a `sptfy init --overwrite` hint.
+secret. The CLI requests exactly these sorted scopes:
+`playlist-read-collaborative`, `playlist-read-private`,
+`user-library-modify`, `user-library-read`, and `user-read-private`. Catalog
+reads do not require an additional scope. A credential missing a command's
+required library or playlist scope fails before its Spotify resource request
+with a `sptfy init --overwrite` hint.
 
 OAuth access and refresh material is stored only in a `cli-common/credstore`
 backend under the configured credential reference. It is never stored in the
@@ -309,6 +313,34 @@ validation, first-seen deduplication, 40-URI generic-library request chunks,
 ordered check output, success-only mutation output, and partial-failure
 semantics as saved tracks. Album-specific membership endpoints are not used.
 
+## Playlists
+
+### `sptfy playlists list`
+
+The command uses `GET /me/playlists`, defaults to 10, and accepts 1–50 results.
+Its opaque continuation token is bound to playlist listing; provider response
+URLs are never followed. Both `playlist-read-collaborative` and
+`playlist-read-private` must be present before the provider request.
+
+Default output is:
+
+```text
+ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE
+```
+
+`PUBLIC` renders `-` when Spotify returns a nullable state. `--extended` adds
+`URI`, `URL`, `SNAPSHOT_ID`, and sanitized `DESCRIPTION` fields.
+`--include-artwork` adds `ARTWORK`; `--fields` and `--id` follow the standard
+precedence.
+
+### `sptfy playlists get <playlist-reference>`
+
+The command accepts one raw 22-character ID, matching playlist URI, or
+canonical playlist URL under the same strict validation used by catalog gets.
+It uses one fixed-origin `GET /playlists/{id}` request. Detail output uses the
+stable identity header, and selected `ID` or `PLAYLIST` fields are not repeated
+below it. Playlist items and every playlist mutation are outside this surface.
+
 ## Request behavior
 
 - Requests use fixed Spotify account/API origins; continuation data never
@@ -402,6 +434,18 @@ Provider tests cover the fixed saved-album list path, generic membership paths,
 response and check-length validation, inherited transport behavior, and
 40/41/80/81 chunks including later-chunk failure.
 
+### Playlists
+
+Exercise list bounds, empty pages, nullable public state, missing optional
+owner/display values, default and selected fields, field deduplication,
+extended fields, sanitized descriptions, artwork, pure IDs, continuation, and
+exact stdout/stderr routing. Get covers raw ID, URI, and canonical URL forms,
+identity-field non-duplication, and hostile or wrong-kind rejection before
+authentication. Scope tests require both playlist-read scopes and the
+overwrite hint before provider I/O. Provider fixtures verify fixed paths,
+requested page metadata, non-negative totals/item counts, item bounds,
+response shape, and that provider continuation URLs are never followed.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -411,6 +455,6 @@ normal Spotify configuration or OS keychain.
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the
-relationship breadcrumbs defined above. Playlist management, playback,
-recommendations, podcasts, audiobooks, raw HTTP access, and local media-library
-synchronization remain out of scope until separately specified.
+relationship breadcrumbs defined above. Playlist items and mutations,
+playback, recommendations, podcasts, audiobooks, raw HTTP access, and local
+media-library synchronization remain out of scope until separately specified.

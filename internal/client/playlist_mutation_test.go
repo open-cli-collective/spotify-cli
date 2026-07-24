@@ -70,27 +70,49 @@ func TestAddPlaylistItemsAcceptsExact100URIRequestBody(t *testing.T) {
 	}
 }
 
-func TestAddPlaylistItemsOmitsPositionAndDoesNotRetry(t *testing.T) {
-	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			calls := 0
-			httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-				calls++
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Fatal(err)
+func TestPlaylistMutationHTTPStatusesAreTypedAndNeverRetried(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, test := range []struct {
+			status    int
+			uncertain bool
+		}{
+			{status: http.StatusBadRequest},
+			{status: http.StatusTooManyRequests},
+			{status: http.StatusInternalServerError, uncertain: true},
+			{status: http.StatusBadGateway, uncertain: true},
+			{status: http.StatusServiceUnavailable, uncertain: true},
+			{status: http.StatusGatewayTimeout, uncertain: true},
+		} {
+			t.Run(method+" "+http.StatusText(test.status), func(t *testing.T) {
+				calls := 0
+				httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					calls++
+					body, err := io.ReadAll(request.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if method == http.MethodPost && (strings.Contains(string(body), "position") || strings.Contains(string(body), "tracks")) {
+						t.Fatalf("body=%s", body)
+					}
+					return response(test.status, ""), nil
+				})}
+				spotify := Client{HTTPClient: httpClient}
+				var err error
+				if method == http.MethodPost {
+					_, err = spotify.AddPlaylistItems(context.Background(), mutationPlaylistID, []string{"spotify:track:" + mutationTrackID}, nil)
+				} else {
+					_, err = spotify.RemovePlaylistItemAtPosition(context.Background(), mutationPlaylistID, "spotify:track:"+mutationTrackID, 2, "before")
 				}
-				if strings.Contains(string(body), "position") || strings.Contains(string(body), "tracks") {
-					t.Fatalf("body=%s", body)
+				if test.uncertain {
+					assertMutationUncertain(t, err, method, ErrUpstream)
+				} else {
+					assertMutationRejected(t, err, method, test.status, ErrUpstream)
 				}
-				return response(status, ""), nil
-			})}
-			_, err := (Client{HTTPClient: httpClient}).AddPlaylistItems(context.Background(), mutationPlaylistID, []string{"spotify:track:" + mutationTrackID}, nil)
-			var uncertain *MutationOutcomeUncertainError
-			if !errors.Is(err, ErrUpstream) || errors.As(err, &uncertain) || calls != 1 {
-				t.Fatalf("calls=%d error=%v", calls, err)
-			}
-		})
+				if calls != 1 {
+					t.Fatalf("calls=%d error=%v", calls, err)
+				}
+			})
+		}
 	}
 }
 
@@ -120,18 +142,29 @@ func TestRemovePlaylistItemsByURIUsesCurrentItemsShapeAndSnapshot(t *testing.T) 
 	}
 }
 
-func TestRemovePlaylistItemsByURIDoesNotRetry(t *testing.T) {
-	calls := 0
-	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+func TestRemovePlaylistItemAtPositionUsesSpecificOccurrenceAndSnapshot(t *testing.T) {
+	var calls int
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
-		return response(http.StatusServiceUnavailable, ""), nil
+		if request.Method != http.MethodDelete || request.URL.Path != "/v1/playlists/"+mutationPlaylistID+"/items" ||
+			request.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("request=%s %s", request.Method, request.URL.RequestURI())
+		}
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) != 2 || string(body["snapshot_id"]) != `"after-add"` ||
+			string(body["items"]) != `[{"uri":"spotify:track:`+mutationTrackID+`","positions":[2]}]` {
+			t.Fatalf("body=%v", body)
+		}
+		return response(http.StatusOK, `{"snapshot_id":"after-remove"}`), nil
 	})}
-	_, err := (Client{HTTPClient: httpClient}).RemovePlaylistItemsByURI(
-		context.Background(), mutationPlaylistID, "spotify:track:"+mutationTrackID, "before",
+	snapshot, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).RemovePlaylistItemAtPosition(
+		context.Background(), mutationPlaylistID, "spotify:track:"+mutationTrackID, 2, "after-add",
 	)
-	var uncertain *MutationOutcomeUncertainError
-	if !errors.Is(err, ErrUpstream) || errors.As(err, &uncertain) || calls != 1 {
-		t.Fatalf("calls=%d error=%v", calls, err)
+	if err != nil || snapshot != "after-remove" || calls != 1 {
+		t.Fatalf("snapshot=%q calls=%d error=%v", snapshot, calls, err)
 	}
 }
 
@@ -148,6 +181,10 @@ func TestPlaylistMutationsDoNotRetryTransportErrors(t *testing.T) {
 		}},
 		{name: "remove", method: http.MethodDelete, call: func(spotify Client) error {
 			_, err := spotify.RemovePlaylistItemsByURI(context.Background(), mutationPlaylistID, "spotify:track:"+mutationTrackID, "before")
+			return err
+		}},
+		{name: "remove position", method: http.MethodDelete, call: func(spotify Client) error {
+			_, err := spotify.RemovePlaylistItemAtPosition(context.Background(), mutationPlaylistID, "spotify:track:"+mutationTrackID, 2, "before")
 			return err
 		}},
 	} {
@@ -259,6 +296,10 @@ func TestPlaylistMutationsRejectInvalidInputsAndMarkMissingSnapshotsUncertain(t 
 			_, err := spotify.RemovePlaylistItemsByURI(context.Background(), mutationPlaylistID, validURI, " ")
 			return err
 		},
+		func() error {
+			_, err := spotify.RemovePlaylistItemAtPosition(context.Background(), mutationPlaylistID, validURI, -1, "snapshot")
+			return err
+		},
 	} {
 		err := call()
 		var uncertain *MutationOutcomeUncertainError
@@ -267,10 +308,7 @@ func TestPlaylistMutationsRejectInvalidInputsAndMarkMissingSnapshotsUncertain(t 
 		}
 	}
 	_, err := (Client{BaseURL: "://"}).AddPlaylistItems(context.Background(), mutationPlaylistID, []string{validURI}, nil)
-	var uncertain *MutationOutcomeUncertainError
-	if !errors.Is(err, ErrUpstream) || errors.As(err, &uncertain) {
-		t.Fatalf("request construction error=%v", err)
-	}
+	assertMutationRejected(t, err, http.MethodPost, 0, ErrUpstream)
 	_, err = spotify.AddPlaylistItems(context.Background(), mutationPlaylistID, []string{validURI}, nil)
 	assertMutationUncertain(t, err, http.MethodPost, ErrInvalidResponse)
 	if calls != 1 {
@@ -290,6 +328,17 @@ func assertMutationUncertain(t *testing.T, err error, method string, cause error
 		!errors.Is(err, cause) || !errors.Is(uncertain.Cause, cause) ||
 		err.Error() != "spotify mutation outcome is uncertain; inspect current state before retrying" {
 		t.Fatalf("uncertain=%+v error=%v", uncertain, err)
+	}
+}
+
+func assertMutationRejected(t *testing.T, err error, method string, statusCode int, cause error) {
+	t.Helper()
+	var rejected *MutationRejectedError
+	var uncertain *MutationOutcomeUncertainError
+	if !errors.As(err, &rejected) || errors.As(err, &uncertain) || rejected.Method != method ||
+		rejected.Path != "/playlists/"+mutationPlaylistID+"/items" || rejected.StatusCode != statusCode ||
+		!errors.Is(err, cause) || err.Error() != cause.Error() {
+		t.Fatalf("rejected=%+v error=%v", rejected, err)
 	}
 }
 

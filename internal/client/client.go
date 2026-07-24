@@ -55,6 +55,19 @@ func (err *MutationOutcomeUncertainError) Error() string {
 // Unwrap returns the post-send failure.
 func (err *MutationOutcomeUncertainError) Unwrap() error { return err.Cause }
 
+// MutationRejectedError reports a failure known not to have applied the mutation.
+type MutationRejectedError struct {
+	Cause      error
+	Method     string
+	Path       string
+	StatusCode int
+}
+
+func (err *MutationRejectedError) Error() string { return err.Cause.Error() }
+
+// Unwrap returns the sanitized provider failure.
+func (err *MutationRejectedError) Unwrap() error { return err.Cause }
+
 // User is the stable identity returned by Spotify's current-user endpoint.
 type User struct {
 	AccountID   string `json:"account_id"`
@@ -327,7 +340,7 @@ func (client Client) ListCurrentUserPlaylists(ctx context.Context, limit, offset
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response playlistPageResponse
-	if err := client.requestJSON(ctx, http.MethodGet, "/me/playlists?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, "/me/playlists?"+values.Encode(), &response); err != nil {
 		return PlaylistPage{}, err
 	}
 	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
@@ -410,7 +423,8 @@ type playlistSnapshotResponse struct {
 }
 
 type playlistItemReference struct {
-	URI string `json:"uri"`
+	URI       string `json:"uri"`
+	Positions []int  `json:"positions,omitempty"`
 }
 
 // AddPlaylistItems adds one ordered batch of tracks and returns the new snapshot.
@@ -439,10 +453,22 @@ func (client Client) RemovePlaylistItemsByURI(ctx context.Context, id, uri, snap
 	if !spotifyref.ValidID(id) || !validLibraryURIs(spotifyref.Track, []string{uri}) || strings.TrimSpace(snapshotID) == "" {
 		return "", ErrInvalidResponse
 	}
+	return client.removePlaylistItems(ctx, id, []playlistItemReference{{URI: uri}}, snapshotID)
+}
+
+// RemovePlaylistItemAtPosition removes one specific track occurrence against a known snapshot.
+func (client Client) RemovePlaylistItemAtPosition(ctx context.Context, id, uri string, position int, snapshotID string) (string, error) {
+	if !spotifyref.ValidID(id) || !validLibraryURIs(spotifyref.Track, []string{uri}) || position < 0 || strings.TrimSpace(snapshotID) == "" {
+		return "", ErrInvalidResponse
+	}
+	return client.removePlaylistItems(ctx, id, []playlistItemReference{{URI: uri, Positions: []int{position}}}, snapshotID)
+}
+
+func (client Client) removePlaylistItems(ctx context.Context, id string, items []playlistItemReference, snapshotID string) (string, error) {
 	body := struct {
 		Items      []playlistItemReference `json:"items"`
 		SnapshotID string                  `json:"snapshot_id"`
-	}{Items: []playlistItemReference{{URI: uri}}, SnapshotID: snapshotID}
+	}{Items: items, SnapshotID: snapshotID}
 	path := "/playlists/" + id + "/items"
 	var response playlistSnapshotResponse
 	if err := client.mutateJSON(ctx, http.MethodDelete, path, body, &response); err != nil {
@@ -620,7 +646,7 @@ func (client Client) ListSavedTracks(ctx context.Context, limit, offset int) (Sa
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response savedTrackPageResponse
-	if err := client.requestJSON(ctx, http.MethodGet, "/me/tracks?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, "/me/tracks?"+values.Encode(), &response); err != nil {
 		return SavedTrackPage{}, err
 	}
 	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
@@ -656,7 +682,7 @@ func (client Client) ListSavedAlbums(ctx context.Context, limit, offset int) (Sa
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response savedAlbumPageResponse
-	if err := client.requestJSON(ctx, http.MethodGet, "/me/albums?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, "/me/albums?"+values.Encode(), &response); err != nil {
 		return SavedAlbumPage{}, err
 	}
 	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
@@ -701,7 +727,7 @@ func (client Client) checkSavedItems(ctx context.Context, kind spotifyref.Kind, 
 		end := min(start+40, len(uris))
 		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
 		var chunk []bool
-		if err := client.requestJSON(ctx, http.MethodGet, "/me/library/contains?"+values.Encode(), &chunk); err != nil {
+		if err := client.getJSON(ctx, "/me/library/contains?"+values.Encode(), &chunk); err != nil {
 			return nil, err
 		}
 		if len(chunk) != end-start {
@@ -739,7 +765,7 @@ func (client Client) mutateSavedItems(ctx context.Context, method string, kind s
 	for start := 0; start < len(uris); start += 40 {
 		end := min(start+40, len(uris))
 		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
-		if err := client.requestJSON(ctx, method, "/me/library?"+values.Encode(), nil); err != nil {
+		if err := client.mutateRequest(ctx, method, "/me/library?"+values.Encode()); err != nil {
 			return err
 		}
 	}
@@ -851,22 +877,22 @@ func (client Client) SearchArtists(ctx context.Context, query string, limit, off
 }
 
 func (client Client) getJSON(ctx context.Context, path string, target any) error {
-	return client.requestJSON(ctx, http.MethodGet, path, target)
+	return client.doJSON(ctx, http.MethodGet, path, nil, target, false)
 }
 
-func (client Client) requestJSON(ctx context.Context, method, path string, target any) error {
-	return client.doJSON(ctx, method, path, nil, target)
+func (client Client) mutateRequest(ctx context.Context, method, path string) error {
+	return client.doJSON(ctx, method, path, nil, nil, true)
 }
 
 func (client Client) mutateJSON(ctx context.Context, method, path string, body, target any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return ErrInvalidResponse
+		return mutationRejected(method, path, 0, ErrInvalidResponse)
 	}
-	return client.doJSON(ctx, method, path, encoded, target)
+	return client.doJSON(ctx, method, path, encoded, target, true)
 }
 
-func (client Client) doJSON(ctx context.Context, method, path string, body []byte, target any) error {
+func (client Client) doJSON(ctx context.Context, method, path string, body []byte, target any, mutation bool) error {
 	baseURL := strings.TrimRight(client.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = defaultAPIBaseURL
@@ -876,12 +902,15 @@ func (client Client) doJSON(ctx context.Context, method, path string, body []byt
 		httpClient = http.DefaultClient
 	}
 	attempts := maxAttempts
-	if body != nil {
+	if mutation {
 		attempts = 1
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
 		request, err := http.NewRequestWithContext(ctx, method, baseURL+path, bytes.NewReader(body))
 		if err != nil {
+			if mutation {
+				return mutationRejected(method, path, 0, ErrUpstream)
+			}
 			return ErrUpstream
 		}
 		if body != nil {
@@ -893,10 +922,24 @@ func (client Client) doJSON(ctx context.Context, method, path string, body []byt
 			if ctx.Err() != nil {
 				cause = ctx.Err()
 			}
-			if body != nil {
+			if mutation {
 				return mutationOutcomeUncertain(method, path, cause)
 			}
 			return cause
+		}
+		if mutation && (response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices) {
+			_ = response.Body.Close()
+			cause := ErrUpstream
+			switch response.StatusCode {
+			case http.StatusUnauthorized:
+				cause = ErrUnauthorized
+			case http.StatusForbidden:
+				cause = ErrForbidden
+			}
+			if response.StatusCode >= http.StatusBadRequest && response.StatusCode < http.StatusInternalServerError {
+				return mutationRejected(method, path, response.StatusCode, cause)
+			}
+			return mutationOutcomeUncertain(method, path, cause)
 		}
 		if delay, retry, valid := retryDelay(response, attempt); retry {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBytes))
@@ -924,20 +967,20 @@ func (client Client) doJSON(ctx context.Context, method, path string, body []byt
 		responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 		_ = response.Body.Close()
 		if err != nil {
-			if body != nil {
+			if mutation {
 				return mutationOutcomeUncertain(method, path, errors.Join(ErrInvalidResponse, err))
 			}
 			return ErrInvalidResponse
 		}
 		if len(responseBody) > maxResponseBytes {
-			if body != nil {
+			if mutation {
 				return mutationOutcomeUncertain(method, path, ErrInvalidResponse)
 			}
 			return ErrInvalidResponse
 		}
 		if target != nil {
 			if err := json.Unmarshal(responseBody, target); err != nil {
-				if body != nil {
+				if mutation {
 					return mutationOutcomeUncertain(method, path, errors.Join(ErrInvalidResponse, err))
 				}
 				return ErrInvalidResponse
@@ -987,4 +1030,8 @@ func (err transportError) Is(target error) bool {
 
 func mutationOutcomeUncertain(method, path string, cause error) error {
 	return &MutationOutcomeUncertainError{Cause: cause, Method: method, Path: path}
+}
+
+func mutationRejected(method, path string, statusCode int, cause error) error {
+	return &MutationRejectedError{Cause: cause, Method: method, Path: path, StatusCode: statusCode}
 }

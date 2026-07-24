@@ -35,6 +35,7 @@ The currently implemented surface contains exactly these commands:
 - `sptfy playlists items list <playlist-reference>`
 - `sptfy playlists items add <playlist-reference> <track-reference>...`
 - `sptfy playlists items remove <playlist-reference> <zero-based-position>`
+- `sptfy playlists items update <playlist-reference> <zero-based-position> --item <track-reference>`
 
 The product exclusions under [Future boundaries](#future-boundaries) remain
 directional and non-normative until promoted into command sections.
@@ -386,9 +387,10 @@ positioned later chunks advance by their preceding chunk sizes.
 Success emits `added<TAB>playlist-id<TAB>start-position<TAB>count<TAB>snapshot-id`.
 If a later request is definitely rejected, the command emits that record for
 the confirmed prefix and returns a partial-mutation error; a first-request
-definite rejection emits no record. If transport or a successful but invalid
-response makes the current batch outcome uncertain, the command emits no stdout
-record, even for earlier confirmed batches. Its sanitized reconciliation error
+definite rejection emits no record. If transport, an ambiguous provider `5xx`,
+or a successful but invalid response makes the current batch outcome uncertain,
+the command emits no stdout record, even for earlier confirmed batches. Its
+sanitized reconciliation error
 reports the playlist, start/current positions, confirmed and uncertain counts,
 and last confirmed snapshot, and directs inspection before retrying. An
 uncertain batch may have applied.
@@ -413,13 +415,45 @@ If the removal outcome is uncertain, the command emits no stdout record and its
 sanitized reconciliation error reports the playlist position, track ID, and
 prior snapshot. Inspect and reconcile before retrying; the deletion may have
 applied.
-For either mutation, if stdout rejects an applied record, the command exits
+For any playlist mutation, if stdout rejects an applied record, the command exits
 nonzero and stderr includes the full sanitized recovery record while preserving
 any partial-mutation cause. A nonzero remove therefore does not imply that no
 deletion occurred.
-Both mutation commands require both playlist read scopes and both playlist
-modify scopes before any Spotify resource request. Mutation requests are never
-automatically replayed after ambiguous provider failures.
+
+### `sptfy playlists items update <playlist-reference> <zero-based-position> --item <track-reference>`
+
+The command reads the complete playlist and rejects out-of-range, non-track,
+local, unavailable, future, same-item, duplicate-source, duplicate-replacement,
+and stale states before writing. It adds the replacement at the requested
+position, then removes the unique original URI using the add snapshot. This
+preserves order and never exposes Spotify's whole-playlist replacement API.
+Before removal, two playlist reads must bracket a complete ordered item read at
+the add snapshot and original count plus one. Stable type, ID, and URI identity
+must equal the exact original sequence with only the new track inserted at the
+target; mutable display metadata is ignored. Any read failure or mismatch emits
+no record, skips removal, and returns sanitized reconciliation guidance with the
+confirmed add snapshot. The final request removes only the original occurrence
+at its post-add position (`position + 1`) under that snapshot; it does not use
+the URI-only all-occurrences shape used by guarded standalone removal.
+
+Success emits
+`updated<TAB>playlist-id<TAB>position<TAB>old-track-id<TAB>new-track-id<TAB>snapshot-id`.
+Running update at the reported position with the old track ID is the inverse.
+A definite provider `4xx` add rejection emits no record. A definite provider
+`4xx` remove rejection after a successful add emits no record and reports only
+that the add succeeded at the included snapshot and this command's removal was
+rejected without applying. It includes the playlist, position, and old/new IDs,
+and directs inspection of the current playlist before recovery or retry because
+collaborators may have moved or removed either item. An uncertain add likewise
+emits no record and reports those identifiers without a confirmed post-write
+snapshot. An uncertain remove also reports the confirmed add snapshot. Provider
+`5xx` responses are uncertain; inspect before retrying because the step may have
+applied. If final stdout fails after confirmed success, the error preserves the
+complete inverse record.
+
+All three playlist-item mutation commands require both playlist read scopes and
+both playlist modify scopes before any Spotify resource request. Mutation
+requests are never automatically replayed after ambiguous provider failures.
 
 ## Request behavior
 
@@ -427,8 +461,10 @@ automatically replayed after ambiguous provider failures.
   supplies a URL to follow.
 - OAuth access tokens refresh when possible and the refreshed credential is
   persisted back to the same allowed key.
-- `429` responses honor `Retry-After`; retryable `502`, `503`, and `504`
-  responses use conservative retries bounded to three total attempts.
+- Read-only `429` responses honor `Retry-After`; retryable `502`, `503`, and
+  `504` read responses use conservative retries bounded to three total attempts.
+- Mutation `4xx` responses, including `429`, are definite provider rejections;
+  mutation `5xx` responses are outcome-uncertain and are never replayed.
 - Retries stop on context cancellation and never apply to unrelated client
   errors.
 - Response/error bodies are size-limited before decoding or reporting.
@@ -534,13 +570,18 @@ current `/items` path and `item` member, exact page metadata, nonnegative
 durations, required arrays, present item IDs, fixed origin, and ignored
 provider pagination URLs. The static and opt-in live smokes prove the configured
 three-ID prefix, positions and continuation derived from the runtime item count,
-ID-only order, a middle insertion, and byte-for-byte restoration of the captured
-full baseline after positional removal.
+ID-only order, an exact middle replacement, and byte-for-byte restoration of
+the captured full baseline after the inverse replacement. The replacement ID
+comes from deterministic ID-only track search and must match the separately
+configured safe mutation fixture before any playlist write.
 Mutation tests additionally cover complete validation, insertion boundaries,
 duplicate preservation, 100/101 chunking, full-list duplicate detection,
 non-track rejection, stale snapshots/counts, compact inverse records,
 definite first-request stdout suppression, accepted-prefix output after definite
 partial success, and outcome-uncertain reconciliation without stdout. A
+replacement test suite covers raw/URI/URL references, start/middle/end and
+paginated order preservation, add-before-remove snapshot handoff, unsafe-state
+rejection, definite partial failure, uncertain steps, and output failure. A
 real-only build-tagged provider probe inserts two occurrences of the distinct
 mutation track, waits through the bounded
 provider write-settling window, proves one current URI removal removes both, and
@@ -557,7 +598,7 @@ normal Spotify configuration or OS keychain.
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the
-relationship breadcrumbs defined above. Higher-level playlist replacement,
-batch positional removal, duplicate-URI force removal, episodes, local items,
+relationship breadcrumbs defined above. Batch playlist replacement, batch
+positional removal, duplicate-URI force removal, episodes, local items,
 playback, recommendations, podcasts, audiobooks, raw HTTP access, and local
 media-library synchronization remain out of scope until separately specified.

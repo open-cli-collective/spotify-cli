@@ -155,6 +155,9 @@ func New(deps Dependencies) *cobra.Command {
 		OpenRemoveSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.RemoveSession, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
+		OpenUpdateSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.UpdateSession, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
 		Backend: &backend,
 	}))
 	return cmd

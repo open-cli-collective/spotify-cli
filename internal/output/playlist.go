@@ -277,6 +277,11 @@ func RenderPlaylistItemRemoved(playlistID string, position int, trackID, snapsho
 	return strings.Join([]string{"removed", mutationCell(playlistID), strconv.Itoa(position), mutationCell(trackID), mutationCell(snapshotID)}, "\t") + "\n"
 }
 
+// RenderPlaylistItemUpdated renders one reversible playlist-replacement record.
+func RenderPlaylistItemUpdated(playlistID string, position int, oldTrackID, newTrackID, snapshotID string) string {
+	return strings.Join([]string{"updated", mutationCell(playlistID), strconv.Itoa(position), mutationCell(oldTrackID), mutationCell(newTrackID), mutationCell(snapshotID)}, "\t") + "\n"
+}
+
 func mutationCell(value string) string {
 	return strings.ReplaceAll(cell(value), "\t", " ")
 }

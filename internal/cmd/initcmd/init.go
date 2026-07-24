@@ -72,6 +72,7 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 	if err != nil {
 		return exitcode.New(exitcode.Config, err)
 	}
+	configuredBackend := strings.TrimSpace(configValue.Keyring.Backend)
 	setup := Setup{
 		ClientID: configValue.ClientID, RedirectURI: configValue.RedirectURI,
 		CredentialRef: configValue.CredentialRef, Backend: configValue.Keyring.Backend,
@@ -89,11 +90,12 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 	backendSet := backendFlag != nil && backendFlag.Changed
 	runtimeBackend := pointerValue(dependencies.Backend)
 	runtimeBackendSet := backendSet
+	interactive := dependencies.Interactive && !nonInteractive
 	if backendSet {
 		setup.Backend = runtimeBackend
 	}
 
-	if dependencies.Interactive && !nonInteractive {
+	if interactive {
 		prompt := dependencies.Prompt
 		if prompt == nil {
 			prompt = func(value *Setup) error { return RunPrompt(command.InOrStdin(), command.ErrOrStderr(), value) }
@@ -127,7 +129,7 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 
 	result, err := dependencies.Initializer.Initialize(command.Context(), InitializeOptions{
 		Config: configValue, Profile: profile, Backend: runtimeBackend, BackendSet: runtimeBackendSet,
-		Overwrite: overwrite, Verify: !noVerify,
+		Overwrite: overwrite || (interactive && strings.TrimSpace(setup.Backend) != configuredBackend), Verify: !noVerify,
 		Authorization: auth.Request{
 			ClientID: configValue.ClientID, RedirectURI: configValue.RedirectURI,
 			NoBrowser: noBrowser || authCodeStdin, AuthCodeStdin: authCodeStdin,

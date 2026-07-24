@@ -125,7 +125,8 @@ matching URI, or canonical URL:
 
 ```sh
 sptfy playlists list --max 10
-sptfy playlists get spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
+sptfy playlists get spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
+sptfy playlists items list spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
 ```
 
 Lists default to 10 and allow 1–50 results. Default fields are
@@ -133,8 +134,15 @@ Lists default to 10 and allow 1–50 results. Default fields are
 `--extended` adds `URI | URL | SNAPSHOT_ID | DESCRIPTION`, and
 `--include-artwork` adds Spotify-hosted artwork metadata. `--fields`, `--id`,
 text sanitization, detail identity headers, and opaque stderr continuation
-hints follow the resource-output rules above. Playlist items and mutations are
-not implemented.
+hints follow the resource-output rules above.
+
+Playlist-item lists preserve Spotify order and print the playlist ID once,
+followed by `POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID |
+ALBUM | DURATION`. Positions are absolute and zero-based across continuation
+pages. Track, episode, local, unavailable, and future item shapes remain
+distinct; `--id` emits only entries with Spotify IDs. Playlist mutations are
+not implemented. Spotify currently exposes playlist details and items only
+when the current user owns or collaborates on the playlist.
 
 ## Saved tracks
 
@@ -190,14 +198,16 @@ an OS keychain. It is opt-in and is not part of ordinary CI:
 SPOTIFY_CLI_LIVE=1 \
 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
 SPOTIFY_CLI_LIVE_PLAYLIST_ID=your_playlist_id \
+SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=first_item_id,second_item_id,third_item_id \
 SPOTIFY_CLIENT_ID=your_client_id \
 make live-smoke
 ```
 
 The harness is interactive because Spotify authorization opens a browser. It
 exercises setup, identity, refresh, search/pagination shapes, catalog gets,
-relationship traversals, playlist list/get, replacement, clear, and
-re-initialization without exporting the stored OAuth credential.
+relationship traversals, playlist list/get, ordered playlist-item pagination,
+replacement, clear, and re-initialization without exporting the stored OAuth
+credential.
 
 ## License
 

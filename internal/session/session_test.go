@@ -169,6 +169,9 @@ func TestSessionDelegatesPlaylistReads(t *testing.T) {
 		if request.URL.Path == "/v1/me/playlists" {
 			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
 		}
+		if request.URL.Path == "/v1/playlists/"+id+"/items" {
+			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
+		}
 		return response(http.StatusOK, `{"id":"`+id+`","items":{"total":0}}`), nil
 	})}
 	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
@@ -178,7 +181,10 @@ func TestSessionDelegatesPlaylistReads(t *testing.T) {
 	if _, err := authenticated.GetPlaylist(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
-	want := "/v1/me/playlists?limit=1&offset=0,/v1/playlists/" + id
+	if _, err := authenticated.ListPlaylistItems(context.Background(), id, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	want := "/v1/me/playlists?limit=1&offset=0,/v1/playlists/" + id + ",/v1/playlists/" + id + "/items?additional_types=episode&limit=1&offset=0"
 	if strings.Join(paths, ",") != want {
 		t.Fatalf("paths=%v want=%s", paths, want)
 	}

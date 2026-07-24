@@ -93,6 +93,11 @@ func (session *Session) GetPlaylist(ctx context.Context, id string) (client.Play
 	return session.client.GetPlaylist(ctx, id)
 }
 
+// ListPlaylistItems lists one ordered playlist-item page with the authenticated Spotify client.
+func (session *Session) ListPlaylistItems(ctx context.Context, id string, limit, offset int) (client.PlaylistItemPage, error) {
+	return session.client.ListPlaylistItems(ctx, id, limit, offset)
+}
+
 // ListSavedTracks lists saved tracks with the authenticated Spotify client.
 func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
 	return session.client.ListSavedTracks(ctx, limit, offset)

@@ -334,6 +334,8 @@ func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
 			_, _ = io.WriteString(writer, `{"items":[{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}],"limit":10,"offset":0,"total":1,"next":null}`)
 		case "/v1/playlists/" + id:
 			_, _ = io.WriteString(writer, `{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}`)
+		case "/v1/playlists/" + id + "/items":
+			_, _ = io.WriteString(writer, `{"items":[{"added_at":"2026-07-24T12:00:00Z","added_by":{"id":"owner-1"},"is_local":false,"item":{"type":"track","id":"abcdefghijklmnopqrstuv","name":"Song","artists":[{"id":"1111111111111111111111","name":"Artist"}],"album":{"id":"2222222222222222222222","name":"Album","images":[]},"duration_ms":61000}}],"limit":10,"offset":0,"total":1,"next":null}`)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -356,7 +358,15 @@ func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
 	if h.out.String() != id+"  Mix\nOwner ID: owner-1\n" || h.errOut.Len() != 0 {
 		t.Fatalf("get stdout=%q stderr=%q", h.out.String(), h.errOut.String())
 	}
-	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id {
+	h.out.Reset()
+	if err := h.execute("playlists", "items", "list", "https://open.spotify.com/playlist/"+id); err != nil {
+		t.Fatal(err)
+	}
+	wantItems := "Playlist ID: " + id + "\nPOSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n0 | track | abcdefghijklmnopqrstuv | Song | 1111111111111111111111 | Artist | 2222222222222222222222 | Album | 1:01\n"
+	if h.out.String() != wantItems || h.errOut.Len() != 0 {
+		t.Fatalf("items stdout=%q stderr=%q", h.out.String(), h.errOut.String())
+	}
+	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items?additional_types=episode&limit=10&offset=0" {
 		t.Fatalf("paths=%v", paths)
 	}
 }

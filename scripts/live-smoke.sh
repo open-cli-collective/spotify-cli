@@ -6,6 +6,12 @@ set -euo pipefail
 [[ -n ${SPOTIFY_CLIENT_ID:-} ]] || { printf '%s\n' 'SPOTIFY_CLIENT_ID is required' >&2; exit 2; }
 [[ -n ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:-} ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ID is required' >&2; exit 2; }
 [[ $SPOTIFY_CLI_LIVE_PLAYLIST_ID =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ID must be a 22-character Spotify ID' >&2; exit 2; }
+[[ -n ${SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS:-} ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS is required' >&2; exit 2; }
+IFS=, read -r -a playlist_expected_item_ids <<<"$SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS"
+[[ ${#playlist_expected_item_ids[@]} -eq 3 ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS requires exactly three comma-separated IDs' >&2; exit 2; }
+for playlist_item_id in "${playlist_expected_item_ids[@]}"; do
+  [[ $playlist_item_id =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS must contain only 22-character Spotify IDs' >&2; exit 2; }
+done
 live_dry=${SPOTIFY_CLI_LIVE_DRY_RUN:-0}
 if [[ $live_dry != 1 ]]; then
   [[ -t 0 ]] || { printf '%s\n' 'the live smoke requires an interactive terminal' >&2; exit 2; }
@@ -133,6 +139,28 @@ fi
 playlist_fixture_ids=$("$SPTFY" --backend file playlists list --id --max 50)
 grep -Fxq "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" <<<"$playlist_fixture_ids" || { printf '%s\n' 'configured playlist fixture was not listed' >&2; exit 1; }
 [[ $("$SPTFY" --backend file playlists get "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id) == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist get returned an unexpected ID' >&2; exit 1; }
+
+playlist_items_page_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.out"
+playlist_items_page_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.err"
+"$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --max 2 >"$playlist_items_page_out" 2>"$playlist_items_page_err"
+[[ $(wc -l <"$playlist_items_page_out") -eq 4 ]] || { printf '%s\n' 'playlist items first page did not return exactly two rows' >&2; exit 1; }
+[[ $(sed -n '1p' "$playlist_items_page_out") == "Playlist ID: $SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist items returned an unexpected parent' >&2; exit 1; }
+[[ $(sed -n '2p' "$playlist_items_page_out") == 'POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION' ]] || { printf '%s\n' 'playlist items returned an unexpected shape' >&2; exit 1; }
+[[ $(awk -F ' \\| ' 'NR == 3 {print $1":"$3}' "$playlist_items_page_out") == "0:${playlist_expected_item_ids[0]}" ]] || { printf '%s\n' 'playlist item zero did not match the fixture' >&2; exit 1; }
+[[ $(awk -F ' \\| ' 'NR == 4 {print $1":"$3}' "$playlist_items_page_out") == "1:${playlist_expected_item_ids[1]}" ]] || { printf '%s\n' 'playlist item one did not match the fixture' >&2; exit 1; }
+playlist_items_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$playlist_items_page_err")
+[[ -n $playlist_items_token ]] || { printf '%s\n' 'playlist items did not return a continuation token' >&2; exit 1; }
+playlist_items_next_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-next.out"
+playlist_items_next_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-next.err"
+"$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --max 2 --next-page-token "$playlist_items_token" >"$playlist_items_next_out" 2>"$playlist_items_next_err"
+[[ ! -s $playlist_items_next_err ]] || { printf '%s\n' 'playlist item continuation emitted unexpected stderr' >&2; exit 1; }
+[[ $(wc -l <"$playlist_items_next_out") -eq 3 ]] || { printf '%s\n' 'playlist item continuation did not return exactly one row' >&2; exit 1; }
+[[ $(sed -n '1p' "$playlist_items_next_out") == "Playlist ID: $SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist item continuation returned an unexpected parent' >&2; exit 1; }
+[[ $(sed -n '2p' "$playlist_items_next_out") == 'POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION' ]] || { printf '%s\n' 'playlist item continuation returned an unexpected shape' >&2; exit 1; }
+[[ $(awk -F ' \\| ' 'NR == 3 {print $1":"$3}' "$playlist_items_next_out") == "2:${playlist_expected_item_ids[2]}" ]] || { printf '%s\n' 'playlist item continuation did not resume at position two' >&2; exit 1; }
+playlist_items_ids=$("$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 3)
+printf -v playlist_expected_ids '%s\n%s\n%s' "${playlist_expected_item_ids[0]}" "${playlist_expected_item_ids[1]}" "${playlist_expected_item_ids[2]}"
+[[ $playlist_items_ids == "$playlist_expected_ids" ]] || { printf '%s\n' 'playlist item ID-only order did not match normal output' >&2; exit 1; }
 
 track_id=11dFghVXANMlKmJXsNCbNl
 album_id=4aawyAB9vmqN3uQ7FjRGTy

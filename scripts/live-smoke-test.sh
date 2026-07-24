@@ -21,6 +21,7 @@ root=${SPOTIFY_CLI_LIVE_ROOT:?}
 [[ $XDG_DATA_HOME == "$root/xdgdata" ]]
 [[ $XDG_STATE_HOME == "$root/xdgstate" ]]
 marker="$XDG_DATA_HOME/cleared"
+IFS=, read -r -a item_ids <<<"${SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS:?}"
 if [[ $args == *" config clear "* ]]; then
   touch "$marker"
 elif [[ $args == *" init "* ]]; then
@@ -53,7 +54,6 @@ elif [[ $args == *" playlists get "* ]]; then
 	[[ $args == *" playlists get ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} --id "* ]] || exit 16
 	printf '%s\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID"
 elif [[ $args == *" playlists items list "* ]]; then
-  IFS=, read -r -a item_ids <<<"${SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS:?}"
   extra_ids=()
   extra_count=0
   if [[ -n ${SPOTIFY_CLI_LIVE_FAKE_PLAYLIST_EXTRA_IDS:-} ]]; then
@@ -69,12 +69,14 @@ elif [[ $args == *" playlists items list "* ]]; then
       delayed_baseline=1
       [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' delayed-baseline >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
     fi
-    if [[ -f $XDG_DATA_HOME/playlist-mutated && $delayed_baseline == 0 ]]; then
-      if [[ ${SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_ADD_VISIBILITY:-0} == 1 && ! -f $XDG_DATA_HOME/playlist-visible-logged ]]; then
+    if [[ -f $XDG_DATA_HOME/playlist-partial && $delayed_baseline == 0 ]]; then
+      printf '%s\n' "${item_ids[0]}" "${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:?}" "${item_ids[1]}" "${item_ids[2]}"
+    elif [[ -f $XDG_DATA_HOME/playlist-mutated && $delayed_baseline == 0 ]]; then
+      if [[ ${SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_UPDATE_VISIBILITY:-0} == 1 && ! -f $XDG_DATA_HOME/playlist-visible-logged ]]; then
         touch "$XDG_DATA_HOME/playlist-visible-logged"
         [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' visible >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
       fi
-      printf '%s\n' "${item_ids[0]}" "${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:?}" "${item_ids[1]}" "${item_ids[2]}"
+      printf '%s\n' "${item_ids[0]}" "${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:?}" "${item_ids[2]}"
     else
       printf '%s\n' "${item_ids[0]}" "${item_ids[1]}" "${item_ids[2]}"
     fi
@@ -104,6 +106,33 @@ elif [[ $args == *" playlists items list "* ]]; then
   else
     exit 18
   fi
+elif [[ $args == " --backend file playlists items update ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} 1 --item ${item_ids[1]} " ]]; then
+  [[ ${SPOTIFY_CLI_LIVE_FAKE_FAIL_PLAYLIST_RESTORE:-0} != 1 ]] || exit 22
+  rm -f "$XDG_DATA_HOME/playlist-mutated" "$XDG_DATA_HOME/playlist-pending" "$XDG_DATA_HOME/playlist-partial"
+  [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' inverse >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
+  printf 'updated\t%s\t1\t%s\t%s\tsnapshot-inverse\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" "${item_ids[1]}"
+elif [[ $args == *" playlists items update "* ]]; then
+  [[ -f $XDG_DATA_HOME/playlist-search-candidate ]] || exit 23
+  candidate_id=$(<"$XDG_DATA_HOME/playlist-search-candidate")
+  [[ $args == " --backend file playlists items update ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} 1 --item $candidate_id " ]] || exit 24
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_UPDATE_VISIBILITY:-0} == 1 ]]; then
+    touch "$XDG_DATA_HOME/playlist-pending"
+  else
+    touch "$XDG_DATA_HOME/playlist-mutated"
+  fi
+  [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' update >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_INTERRUPT_PLAYLIST_UPDATE:-0} == 1 ]]; then
+    kill -TERM "$PPID"
+    exit 143
+  fi
+  if [[ ${SPOTIFY_CLI_LIVE_FAKE_PARTIAL_PLAYLIST_UPDATE:-0} == 1 ]]; then
+    rm -f "$XDG_DATA_HOME/playlist-mutated" "$XDG_DATA_HOME/playlist-pending"
+    touch "$XDG_DATA_HOME/playlist-partial"
+    printf 'playlist replacement incomplete; add succeeded and removal was rejected without applying; inspect current playlist before recovery or retry: playlist=%s position=1 old=%s new=%s add_snapshot=snapshot-add\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "${item_ids[1]}" "$candidate_id" >&2
+    exit 20
+  fi
+  [[ ${SPOTIFY_CLI_LIVE_FAKE_FAIL_PLAYLIST_UPDATE:-0} != 1 ]] || exit 20
+  printf 'updated\t%s\t1\t%s\t%s\tsnapshot-update\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "${item_ids[1]}" "$candidate_id"
 elif [[ $args == *" playlists items add "* ]]; then
   [[ $args == " --backend file playlists items add ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} ${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:?} --position 1 " ]] || exit 19
   if [[ ${SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_ADD_VISIBILITY:-0} == 1 ]]; then
@@ -121,7 +150,7 @@ elif [[ $args == *" playlists items add "* ]]; then
 elif [[ $args == *" playlists items remove "* ]]; then
   [[ $args == " --backend file playlists items remove ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:?} 1 " ]] || exit 21
   [[ ${SPOTIFY_CLI_LIVE_FAKE_FAIL_PLAYLIST_RESTORE:-0} != 1 ]] || exit 22
-  rm -f "$XDG_DATA_HOME/playlist-mutated" "$XDG_DATA_HOME/playlist-pending"
+  rm -f "$XDG_DATA_HOME/playlist-mutated" "$XDG_DATA_HOME/playlist-pending" "$XDG_DATA_HOME/playlist-partial"
   [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' remove >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
   printf 'removed\t%s\t1\t%s\tsnapshot-remove\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID"
 elif [[ $args == *" library tracks list "* ]]; then
@@ -170,16 +199,23 @@ elif [[ $args == *" library albums remove "* ]]; then
   rm -f "$XDG_DATA_HOME/library-album-saved"
   printf 'removed\t1\n'
 elif [[ $args == *" search track "* ]]; then
-  printf 'ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
-  if [[ $args != *" track:\"sptfy-"* ]]; then
-    if [[ $args == *" --id "* ]]; then
-      printf 'track-1\n'
-    else
-      printf 'track-1 | Song | artist-1 | Artist | album-1 | Album | 1:00\n'
+  if [[ $args == " --backend file search track ${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY:?} --id --max 1 " ]]; then
+    candidate_id=${SPOTIFY_CLI_LIVE_FAKE_SEARCH_RESULT_ID:-${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:?}}
+    printf '%s' "$candidate_id" >"$XDG_DATA_HOME/playlist-search-candidate"
+    [[ -z ${SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG:-} ]] || printf '%s\n' search-candidate >>"$SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG"
+    printf '%s\n' "$candidate_id"
+  else
+    printf 'ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n'
+    if [[ $args != *" track:\"sptfy-"* ]]; then
+      if [[ $args == *" --id "* ]]; then
+        printf 'track-1\n'
+      else
+        printf 'track-1 | Song | artist-1 | Artist | album-1 | Album | 1:00\n'
+      fi
     fi
-  fi
-  if [[ $args == *" --max 1 "* && $args != *" --next-page-token "* ]]; then
-    printf 'More results available (next: token)\n' >&2
+    if [[ $args == *" --max 1 "* && $args != *" --next-page-token "* ]]; then
+      printf 'More results available (next: token)\n' >&2
+    fi
   fi
 elif [[ $args == *" search album "* ]]; then
   if [[ $args == *" --id "* ]]; then
@@ -226,6 +262,7 @@ elif [[ $args == *" artists albums list "* ]]; then
 fi
 FAKE
 chmod +x "$fake"
+export SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY=mutation-fixture
 
 expect_guard_failure() {
   if "$@" >/dev/null 2>&1; then
@@ -243,8 +280,30 @@ expect_guard_failure env -u SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS SPOTIFY_CLI_LIVE=
 expect_guard_failure env SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111,2222222222222222222222 SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env -u SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
+expect_guard_failure env -u SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=2222222222222222222222 SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=bad SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
 expect_guard_failure env SPOTIFY_CLI_LIVE=1 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 SPOTIFY_CLI_LIVE_DRY_RUN=1 SPOTIFY_CLI_LIVE_BINARY="$fake" SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=abcdefghijklmnopqrstuv SPOTIFY_CLIENT_ID=test ./scripts/live-smoke.sh
+
+search_handoff_event_log="$test_root/search-handoff.events"
+search_handoff_err="$test_root/search-handoff.err"
+if env TMPDIR="$test_root" \
+  SPOTIFY_CLI_LIVE=1 \
+  SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+  SPOTIFY_CLI_LIVE_DRY_RUN=1 \
+  SPOTIFY_CLI_LIVE_BINARY="$fake" \
+  SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG="$search_handoff_event_log" \
+  SPOTIFY_CLI_LIVE_FAKE_SEARCH_RESULT_ID=3333333333333333333333 \
+  SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL \
+  SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 \
+  SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=2222222222222222222222 \
+  SPOTIFY_CLIENT_ID=test \
+  ./scripts/live-smoke.sh >/dev/null 2>"$search_handoff_err"; then
+  printf '%s\n' 'live harness unexpectedly ignored a mismatched search candidate' >&2
+  exit 1
+fi
+grep -Fq 'does not match the configured safe mutation fixture' "$search_handoff_err"
+[[ $(cat "$search_handoff_event_log") == search-candidate ]] || { printf '%s\n' 'search candidate mismatch reached playlist mutation' >&2; exit 1; }
+rm -f "$search_handoff_event_log" "$search_handoff_err"
 
 for initially_saved in 0 1; do
   smoke_err="$test_root/smoke-$initially_saved.err"
@@ -312,7 +371,7 @@ done
 for playlist_failure in FAIL INTERRUPT; do
   playlist_event_log="$test_root/playlist-$playlist_failure.events"
   playlist_failure_err="$test_root/playlist-$playlist_failure.err"
-  failure_name="SPOTIFY_CLI_LIVE_FAKE_${playlist_failure}_PLAYLIST_ADD"
+  failure_name="SPOTIFY_CLI_LIVE_FAKE_${playlist_failure}_PLAYLIST_UPDATE"
   if env TMPDIR="$test_root" \
     SPOTIFY_CLI_LIVE=1 \
     SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
@@ -325,10 +384,10 @@ for playlist_failure in FAIL INTERRUPT; do
     SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=2222222222222222222222 \
     SPOTIFY_CLIENT_ID=test \
     ./scripts/live-smoke.sh >/dev/null 2>"$playlist_failure_err"; then
-    printf '%s\n' "live harness unexpectedly accepted $playlist_failure playlist add" >&2
+    printf '%s\n' "live harness unexpectedly accepted $playlist_failure playlist update" >&2
     exit 1
   fi
-  [[ $(cat "$playlist_event_log") == $'add\nremove' ]] || { printf '%s\n' "playlist $playlist_failure cleanup did not restore" >&2; exit 1; }
+  [[ $(cat "$playlist_event_log") == $'search-candidate\nupdate\ninverse' ]] || { printf '%s\n' "playlist $playlist_failure cleanup did not restore" >&2; exit 1; }
   rm -f "$playlist_event_log" "$playlist_failure_err"
 done
 
@@ -340,18 +399,43 @@ if env TMPDIR="$test_root" \
   SPOTIFY_CLI_LIVE_DRY_RUN=1 \
   SPOTIFY_CLI_LIVE_BINARY="$fake" \
   SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG="$delayed_playlist_event_log" \
-  SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_ADD_VISIBILITY=1 \
-  SPOTIFY_CLI_LIVE_FAKE_FAIL_PLAYLIST_ADD=1 \
+  SPOTIFY_CLI_LIVE_FAKE_DELAY_PLAYLIST_UPDATE_VISIBILITY=1 \
+  SPOTIFY_CLI_LIVE_FAKE_FAIL_PLAYLIST_UPDATE=1 \
   SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL \
   SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 \
   SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=2222222222222222222222 \
   SPOTIFY_CLIENT_ID=test \
   ./scripts/live-smoke.sh >/dev/null 2>"$delayed_playlist_err"; then
-  printf '%s\n' 'live harness unexpectedly accepted a delayed playlist add failure' >&2
+  printf '%s\n' 'live harness unexpectedly accepted a delayed playlist update failure' >&2
   exit 1
 fi
-[[ $(cat "$delayed_playlist_event_log") == $'add\ndelayed-baseline\nvisible\nremove' ]] || { printf '%s\n' 'delayed playlist cleanup did not wait for visibility and restore' >&2; exit 1; }
+[[ $(cat "$delayed_playlist_event_log") == $'search-candidate\nupdate\ndelayed-baseline\nvisible\ninverse' ]] || { printf '%s\n' 'delayed playlist cleanup did not wait for visibility and restore' >&2; exit 1; }
 rm -f "$delayed_playlist_event_log" "$delayed_playlist_err"
+
+playlist_partial_event_log="$test_root/playlist-partial.events"
+playlist_partial_err="$test_root/playlist-partial.err"
+if env TMPDIR="$test_root" \
+  SPOTIFY_CLI_LIVE=1 \
+  SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+  SPOTIFY_CLI_LIVE_DRY_RUN=1 \
+  SPOTIFY_CLI_LIVE_BINARY="$fake" \
+  SPOTIFY_CLI_LIVE_FAKE_EVENT_LOG="$playlist_partial_event_log" \
+  SPOTIFY_CLI_LIVE_FAKE_PARTIAL_PLAYLIST_UPDATE=1 \
+  SPOTIFY_CLI_LIVE_PLAYLIST_ID=0123456789ABCDEFGHIJKL \
+  SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=abcdefghijklmnopqrstuv,ZYXWVUTSRQPONMLKJIHGFE,1111111111111111111111 \
+  SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=2222222222222222222222 \
+  SPOTIFY_CLIENT_ID=test \
+  ./scripts/live-smoke.sh >/dev/null 2>"$playlist_partial_err"; then
+  printf '%s\n' 'live harness unexpectedly accepted a partial playlist update' >&2
+  exit 1
+fi
+grep -Fq 'add succeeded and removal was rejected without applying; inspect current playlist before recovery or retry' "$playlist_partial_err"
+if grep -Fq 'both tracks remain' "$playlist_partial_err"; then
+  printf '%s\n' 'partial playlist error repeated retired global-state claim' >&2
+  exit 1
+fi
+[[ $(cat "$playlist_partial_event_log") == $'search-candidate\nupdate\nremove' ]] || { printf '%s\n' 'partial playlist cleanup did not restore' >&2; exit 1; }
+rm -f "$playlist_partial_event_log" "$playlist_partial_err"
 
 playlist_restore_err="$test_root/playlist-restore.err"
 if TMPDIR="$test_root" \

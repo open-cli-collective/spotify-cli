@@ -108,6 +108,11 @@ func (session *Session) RemovePlaylistItemsByURI(ctx context.Context, id, uri, s
 	return session.client.RemovePlaylistItemsByURI(ctx, id, uri, snapshotID)
 }
 
+// RemovePlaylistItemAtPosition removes one specific track occurrence with the authenticated Spotify client.
+func (session *Session) RemovePlaylistItemAtPosition(ctx context.Context, id, uri string, position int, snapshotID string) (string, error) {
+	return session.client.RemovePlaylistItemAtPosition(ctx, id, uri, position, snapshotID)
+}
+
 // ListSavedTracks lists saved tracks with the authenticated Spotify client.
 func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
 	return session.client.ListSavedTracks(ctx, limit, offset)

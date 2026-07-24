@@ -137,4 +137,7 @@ func TestPlaylistMutationRecordsAreCompactAndSanitized(t *testing.T) {
 	if got := RenderPlaylistItemRemoved("playlist", 2, "track\tID", "next\r\nsnapshot"); got != "removed\tplaylist\t2\ttrack ID\tnext snapshot\n" {
 		t.Fatalf("remove=%q", got)
 	}
+	if got := RenderPlaylistItemUpdated("playlist", 2, "old\tID", "new\nID", "next\r\nsnapshot"); got != "updated\tplaylist\t2\told ID\tnew ID\tnext snapshot\n" {
+		t.Fatalf("update=%q", got)
+	}
 }

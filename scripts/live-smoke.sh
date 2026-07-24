@@ -13,6 +13,7 @@ for playlist_item_id in "${playlist_expected_item_ids[@]}"; do
   [[ $playlist_item_id =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS must contain only 22-character Spotify IDs' >&2; exit 2; }
 done
 [[ ${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID:-} =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID must be a 22-character Spotify ID' >&2; exit 2; }
+[[ -n ${SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY:-} ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY is required' >&2; exit 2; }
 for playlist_item_id in "${playlist_expected_item_ids[@]}"; do
   [[ $SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID != "$playlist_item_id" ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID must be distinct from the configured prefix' >&2; exit 2; }
 done
@@ -36,7 +37,9 @@ library_album_original_saved=
 library_album_restore_needed=0
 playlist_restore_needed=0
 playlist_baseline_ids=
-playlist_inserted_ids=
+playlist_replaced_ids=
+playlist_partial_ids=
+playlist_mutation_candidate_id=
 playlist_mutation_started_at=0
 read_full_playlist_item_ids() {
   local first_out="$SPOTIFY_CLI_LIVE_ROOT/full-items-first.out"
@@ -110,10 +113,20 @@ cleanup() {
     playlist_current_ids=$(read_full_playlist_item_ids 2>/dev/null) || playlist_current_ids=
     wait_for_playlist_write_settle
     playlist_current_ids=$(read_full_playlist_item_ids 2>/dev/null) || playlist_current_ids=
-    if [[ $playlist_current_ids == "$playlist_inserted_ids" ]]; then
+    if [[ $playlist_current_ids == "$playlist_replaced_ids" ]]; then
+      playlist_mutation_started_at=$(date +%s)
+      if ! "$SPTFY" --backend file playlists items update "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1 --item "${playlist_expected_item_ids[1]}" >/dev/null 2>&1; then
+        playlist_current_ids=
+      else
+        wait_for_playlist_write_settle
+        playlist_current_ids=$(wait_for_playlist_item_ids "$playlist_baseline_ids") || playlist_current_ids=
+      fi
+    elif [[ $playlist_current_ids == "$playlist_partial_ids" ]]; then
+      playlist_mutation_started_at=$(date +%s)
       if ! "$SPTFY" --backend file playlists items remove "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1 >/dev/null 2>&1; then
         playlist_current_ids=
       else
+        wait_for_playlist_write_settle
         playlist_current_ids=$(wait_for_playlist_item_ids "$playlist_baseline_ids") || playlist_current_ids=
       fi
     fi
@@ -161,6 +174,9 @@ ordinary_out=$("$SPTFY" --backend file search track a --max 10)
 live_nonce=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 empty_out=$("$SPTFY" --backend file search track "track:\"sptfy-$live_nonce\" artist:\"sptfy-$live_nonce\"")
 [[ $(wc -l <<<"$empty_out") -eq 1 ]] || { printf '%s\n' 'guaranteed-no-match search returned rows' >&2; exit 1; }
+playlist_mutation_candidate_id=$("$SPTFY" --backend file search track "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY" --id --max 1)
+[[ $playlist_mutation_candidate_id =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'playlist mutation search did not return exactly one track ID' >&2; exit 1; }
+[[ $playlist_mutation_candidate_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" ]] || { printf '%s\n' 'playlist mutation search result does not match the configured safe mutation fixture' >&2; exit 1; }
 
 page_out="$SPOTIFY_CLI_LIVE_ROOT/page.out"
 page_err="$SPOTIFY_CLI_LIVE_ROOT/page.err"
@@ -218,7 +234,8 @@ if grep -Fxq "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" "$playlist_baseline_
   exit 1
 fi
 playlist_baseline_ids=$(<"$playlist_baseline_out")
-playlist_inserted_ids=$(sed -n '1p' "$playlist_baseline_out"; printf '%s\n' "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID"; sed -n '2,$p' "$playlist_baseline_out")
+playlist_replaced_ids=$(sed -n '1p' "$playlist_baseline_out"; printf '%s\n' "$playlist_mutation_candidate_id"; sed -n '3,$p' "$playlist_baseline_out")
+playlist_partial_ids=$(sed -n '1p' "$playlist_baseline_out"; printf '%s\n' "$playlist_mutation_candidate_id"; sed -n '2,$p' "$playlist_baseline_out")
 
 playlist_items_page_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.out"
 playlist_items_page_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-items-page.err"
@@ -258,19 +275,19 @@ fi
 
 playlist_restore_needed=1
 playlist_mutation_started_at=$(date +%s)
-playlist_add_out=$("$SPTFY" --backend file playlists items add "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" --position 1)
-IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_count playlist_record_snapshot playlist_record_extra <<<"$playlist_add_out"
-[[ $playlist_action == added && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_count == 1 && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'playlist add returned an unexpected record' >&2; exit 1; }
-playlist_items_ids=$(read_full_playlist_item_ids)
-[[ $playlist_items_ids == "$playlist_inserted_ids" ]] || { printf '%s\n' 'playlist add did not preserve the expected middle order' >&2; exit 1; }
+playlist_update_out=$("$SPTFY" --backend file playlists items update "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1 --item "$playlist_mutation_candidate_id")
+IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_old playlist_record_new playlist_record_snapshot playlist_record_extra <<<"$playlist_update_out"
+[[ $playlist_action == updated && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_old == "${playlist_expected_item_ids[1]}" && $playlist_record_new == "$playlist_mutation_candidate_id" && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'playlist update returned an unexpected record' >&2; exit 1; }
 wait_for_playlist_write_settle
-playlist_items_ids=$(read_full_playlist_item_ids)
-[[ $playlist_items_ids == "$playlist_inserted_ids" ]] || { printf '%s\n' 'playlist changed during the provider write-settling window' >&2; exit 1; }
-playlist_remove_out=$("$SPTFY" --backend file playlists items remove "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1)
-IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_track playlist_record_snapshot playlist_record_extra <<<"$playlist_remove_out"
-[[ $playlist_action == removed && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_track == "$SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID" && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'playlist remove returned an unexpected record' >&2; exit 1; }
+playlist_items_ids=$(wait_for_playlist_item_ids "$playlist_replaced_ids") || playlist_items_ids=
+[[ $playlist_items_ids == "$playlist_replaced_ids" ]] || { printf '%s\n' 'playlist update did not replace exactly the target position' >&2; exit 1; }
+playlist_mutation_started_at=$(date +%s)
+playlist_update_out=$("$SPTFY" --backend file playlists items update "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" 1 --item "${playlist_expected_item_ids[1]}")
+IFS=$'\t' read -r playlist_action playlist_record_id playlist_record_position playlist_record_old playlist_record_new playlist_record_snapshot playlist_record_extra <<<"$playlist_update_out"
+[[ $playlist_action == updated && $playlist_record_id == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" && $playlist_record_position == 1 && $playlist_record_old == "$playlist_mutation_candidate_id" && $playlist_record_new == "${playlist_expected_item_ids[1]}" && -n $playlist_record_snapshot && -z $playlist_record_extra ]] || { printf '%s\n' 'inverse playlist update returned an unexpected record' >&2; exit 1; }
+wait_for_playlist_write_settle
 playlist_items_ids=$(wait_for_playlist_item_ids "$playlist_baseline_ids") || playlist_items_ids=
-[[ $playlist_items_ids == "$playlist_baseline_ids" ]] || { printf '%s\n' 'playlist mutation round trip did not restore the exact baseline' >&2; exit 1; }
+[[ $playlist_items_ids == "$playlist_baseline_ids" ]] || { printf '%s\n' 'playlist update round trip did not restore the exact baseline' >&2; exit 1; }
 playlist_restore_needed=0
 
 track_id=11dFghVXANMlKmJXsNCbNl

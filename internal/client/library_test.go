@@ -75,6 +75,85 @@ func TestSavedTrackMutationsChunkAtForty(t *testing.T) {
 	}
 }
 
+func TestQueryOnlySavedItemMutationOutcomesAreTypedAndNeverRetried(t *testing.T) {
+	trackURI := "spotify:track:0123456789ABCDEFGHIJKL"
+	albumURI := "spotify:album:0123456789ABCDEFGHIJKL"
+	for _, operation := range []struct {
+		name   string
+		method string
+		call   func(Client) error
+	}{
+		{name: "save track", method: http.MethodPut, call: func(spotify Client) error {
+			return spotify.SaveSavedTracks(context.Background(), []string{trackURI})
+		}},
+		{name: "remove track", method: http.MethodDelete, call: func(spotify Client) error {
+			return spotify.RemoveSavedTracks(context.Background(), []string{trackURI})
+		}},
+		{name: "save album", method: http.MethodPut, call: func(spotify Client) error {
+			return spotify.SaveSavedAlbums(context.Background(), []string{albumURI})
+		}},
+		{name: "remove album", method: http.MethodDelete, call: func(spotify Client) error {
+			return spotify.RemoveSavedAlbums(context.Background(), []string{albumURI})
+		}},
+	} {
+		for _, test := range []struct {
+			status    int
+			uncertain bool
+		}{
+			{status: http.StatusTooManyRequests},
+			{status: http.StatusServiceUnavailable, uncertain: true},
+		} {
+			t.Run(operation.name+"/"+http.StatusText(test.status), func(t *testing.T) {
+				calls := 0
+				httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					calls++
+					if request.Method != operation.method || request.URL.Path != "/v1/me/library" ||
+						request.URL.Query().Get("uris") == "" || request.Header.Get("Content-Type") != "" {
+						t.Fatalf("request=%s %s content-type=%q", request.Method, request.URL.String(), request.Header.Get("Content-Type"))
+					}
+					return response(test.status, "secret"), nil
+				})}
+				err := operation.call(Client{HTTPClient: httpClient})
+				var uncertain *MutationOutcomeUncertainError
+				var rejected *MutationRejectedError
+				if test.uncertain {
+					if !errors.As(err, &uncertain) || errors.As(err, &rejected) || uncertain.Method != operation.method ||
+						!strings.HasPrefix(uncertain.Path, "/me/library?uris=") || !errors.Is(err, ErrUpstream) {
+						t.Fatalf("uncertain=%+v error=%v", uncertain, err)
+					}
+				} else if !errors.As(err, &rejected) || errors.As(err, &uncertain) || rejected.Method != operation.method ||
+					rejected.StatusCode != test.status || !strings.HasPrefix(rejected.Path, "/me/library?uris=") ||
+					!errors.Is(err, ErrUpstream) || strings.Contains(err.Error(), "secret") {
+					t.Fatalf("rejected=%+v error=%v", rejected, err)
+				}
+				if calls != 1 {
+					t.Fatalf("calls=%d error=%v", calls, err)
+				}
+			})
+		}
+	}
+}
+
+func TestQueryOnlySavedItemMutationPreservesTypedAuthFailures(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   error
+	}{
+		{status: http.StatusUnauthorized, want: ErrUnauthorized},
+		{status: http.StatusForbidden, want: ErrForbidden},
+	} {
+		httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(test.status, "secret"), nil
+		})}
+		err := (Client{HTTPClient: httpClient}).SaveSavedTracks(context.Background(), []string{"spotify:track:0123456789ABCDEFGHIJKL"})
+		var rejected *MutationRejectedError
+		if !errors.As(err, &rejected) || rejected.StatusCode != test.status || !errors.Is(err, test.want) ||
+			err.Error() != test.want.Error() || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("status=%d rejected=%+v error=%v", test.status, rejected, err)
+		}
+	}
+}
+
 func TestSavedTrackOperationsChunkAtForty(t *testing.T) {
 	for _, count := range []int{40, 41, 80, 81} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {

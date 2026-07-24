@@ -54,6 +54,15 @@ type RemoveSession interface {
 	RemovePlaylistItemsByURI(context.Context, string, string, string) (string, error)
 }
 
+// UpdateSession is the authenticated capability required by playlist replacements.
+type UpdateSession interface {
+	authenticatedSession
+	GetPlaylist(context.Context, string) (client.Playlist, error)
+	ListPlaylistItems(context.Context, string, int, int) (client.PlaylistItemPage, error)
+	AddPlaylistItems(context.Context, string, []string, *int) (string, error)
+	RemovePlaylistItemAtPosition(context.Context, string, string, int, string) (string, error)
+}
+
 // ReadSessionOpener opens an authenticated session for playlist reads.
 type ReadSessionOpener func(context.Context, string, bool) (ReadSession, error)
 
@@ -63,11 +72,15 @@ type AddSessionOpener func(context.Context, string, bool) (AddSession, error)
 // RemoveSessionOpener opens an authenticated session for removing playlist items.
 type RemoveSessionOpener func(context.Context, string, bool) (RemoveSession, error)
 
+// UpdateSessionOpener opens an authenticated session for replacing a playlist item.
+type UpdateSessionOpener func(context.Context, string, bool) (UpdateSession, error)
+
 // Dependencies contains the authenticated effect used by playlist commands.
 type Dependencies struct {
 	OpenReadSession   ReadSessionOpener
 	OpenAddSession    AddSessionOpener
 	OpenRemoveSession RemoveSessionOpener
+	OpenUpdateSession UpdateSessionOpener
 	Backend           *string
 }
 
@@ -149,12 +162,66 @@ type removeResult struct {
 	SnapshotID string
 }
 
+type updateResult struct {
+	Position   int
+	OldTrackID string
+	NewTrackID string
+	SnapshotID string
+}
+
+// PartialReplacementError reports an accepted add followed by a definite remove rejection.
+type PartialReplacementError struct {
+	Cause       error
+	PlaylistID  string
+	Position    int
+	OldTrackID  string
+	NewTrackID  string
+	AddSnapshot string
+}
+
+func (err *PartialReplacementError) Error() string {
+	return fmt.Sprintf(
+		"playlist replacement incomplete; add succeeded and removal was rejected without applying; inspect current playlist before recovery or retry: playlist=%s position=%d old=%s new=%s add_snapshot=%s",
+		safeErrorMetadata(err.PlaylistID), err.Position, safeErrorMetadata(err.OldTrackID),
+		safeErrorMetadata(err.NewTrackID), safeErrorMetadata(err.AddSnapshot),
+	)
+}
+
+// Unwrap returns the definite provider rejection.
+func (err *PartialReplacementError) Unwrap() error { return err.Cause }
+
+// ReplacementReconciliationError reports a replacement step whose outcome is unknown.
+type ReplacementReconciliationError struct {
+	Cause       error
+	Phase       string
+	PlaylistID  string
+	Position    int
+	OldTrackID  string
+	NewTrackID  string
+	AddSnapshot string
+}
+
+func (err *ReplacementReconciliationError) Error() string {
+	return fmt.Sprintf(
+		"playlist replacement %s outcome uncertain; inspect and reconcile before retrying: playlist=%s position=%d old=%s new=%s add_snapshot=%s",
+		safeErrorMetadata(err.Phase), safeErrorMetadata(err.PlaylistID), err.Position,
+		safeErrorMetadata(err.OldTrackID), safeErrorMetadata(err.NewTrackID), safeErrorMetadata(err.AddSnapshot),
+	)
+}
+
+// Unwrap returns the outcome-uncertain client failure.
+func (err *ReplacementReconciliationError) Unwrap() error { return err.Cause }
+
 var (
 	errAddPositionExceeds = errors.New("--position exceeds the playlist item count")
 	errRemoveOutside      = errors.New("position is outside the playlist")
 	errRemoveNonTrack     = errors.New("position does not contain a removable Spotify track")
 	errRemoveDuplicate    = errors.New("track occurs more than once; exact-position removal is unavailable")
 	errRemoveChanged      = errors.New("playlist changed before removal; retry with a fresh position")
+	errUpdateSame         = errors.New("replacement track is already at the requested position")
+	errUpdateDuplicate    = errors.New("replacement track already occurs in the playlist")
+	errUpdateChanged      = errors.New("playlist changed before replacement; retry with a fresh position")
+	errUpdateUnverified   = errors.New("playlist state could not be verified after replacement add")
 )
 
 type options struct {
@@ -185,7 +252,7 @@ func newItems(deps Dependencies) *cobra.Command {
 		Use: "items", Short: "Manage ordered Spotify playlist items", Args: noArgs("items"),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
-	command.AddCommand(newItemsList(deps), newItemsAdd(deps), newItemsRemove(deps))
+	command.AddCommand(newItemsList(deps), newItemsAdd(deps), newItemsRemove(deps), newItemsUpdate(deps))
 	return command
 }
 
@@ -271,6 +338,49 @@ func newItemsRemove(deps Dependencies) *cobra.Command {
 	return command
 }
 
+func newItemsUpdate(deps Dependencies) *cobra.Command {
+	var itemReference string
+	command := &cobra.Command{
+		Use: "update <playlist-reference> <zero-based-position> --item <track-reference>", Short: "Replace one track in a Spotify playlist",
+		Args: func(command *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(command, args); err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			return nil
+		},
+		RunE: func(command *cobra.Command, args []string) error {
+			playlistID, err := spotifyref.Parse(args[0], spotifyref.Playlist)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			position, err := strconv.Atoi(args[1])
+			if err != nil || position < 0 {
+				return exitcode.New(exitcode.Usage, errors.New("position must be a nonnegative integer"))
+			}
+			if strings.TrimSpace(itemReference) == "" {
+				return exitcode.New(exitcode.Usage, errors.New("--item is required"))
+			}
+			newTrackID, err := spotifyref.Parse(itemReference, spotifyref.Track)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			authenticated, err := openSession(command, deps.Backend, deps.OpenUpdateSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = authenticated.Close() }()
+			result, err := updatePlaylistItem(command.Context(), authenticated, playlistID, position, newTrackID)
+			if err != nil {
+				return classifyMutation(err)
+			}
+			return writeMutationOutput(command, output.RenderPlaylistItemUpdated(playlistID, result.Position, result.OldTrackID, result.NewTrackID, result.SnapshotID), nil)
+		},
+	}
+	command.Flags().StringVar(&itemReference, "item", "", "Replacement track ID, URI, or URL")
+	command.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return exitcode.New(exitcode.Usage, err) })
+	return command
+}
+
 func addPlaylistItems(ctx context.Context, spotify AddSession, playlistID string, uris []string, position *int) (addResult, error) {
 	playlist, err := spotify.GetPlaylist(ctx, playlistID)
 	if err != nil {
@@ -331,20 +441,9 @@ func removePlaylistItem(ctx context.Context, spotify RemoveSession, playlistID s
 	if position >= total {
 		return removeResult{}, errRemoveOutside
 	}
-	items := make([]client.PlaylistItem, 0, total)
-	for offset := 0; offset < total; {
-		page, err := spotify.ListPlaylistItems(ctx, playlistID, 50, offset)
-		if err != nil {
-			return removeResult{}, err
-		}
-		if page.Total != total || page.Offset != offset || len(page.Items) == 0 {
-			return removeResult{}, client.ErrInvalidResponse
-		}
-		items = append(items, page.Items...)
-		offset += len(page.Items)
-	}
-	if len(items) != total {
-		return removeResult{}, client.ErrInvalidResponse
+	items, err := readPlaylistItems(ctx, spotify, playlistID, total)
+	if err != nil {
+		return removeResult{}, err
 	}
 	target := items[position]
 	uri := "spotify:track:" + target.ID
@@ -379,6 +478,133 @@ func removePlaylistItem(ctx context.Context, spotify RemoveSession, playlistID s
 		return removeResult{}, err
 	}
 	return removeResult{Position: position, TrackID: target.ID, SnapshotID: finalSnapshot}, nil
+}
+
+type playlistItemReader interface {
+	ListPlaylistItems(context.Context, string, int, int) (client.PlaylistItemPage, error)
+}
+
+func readPlaylistItems(ctx context.Context, spotify playlistItemReader, playlistID string, total int) ([]client.PlaylistItem, error) {
+	items := make([]client.PlaylistItem, 0, total)
+	for offset := 0; offset < total; {
+		page, err := spotify.ListPlaylistItems(ctx, playlistID, 50, offset)
+		if err != nil {
+			return nil, err
+		}
+		if page.Total != total || page.Offset != offset || len(page.Items) == 0 {
+			return nil, client.ErrInvalidResponse
+		}
+		items = append(items, page.Items...)
+		offset += len(page.Items)
+	}
+	if len(items) != total {
+		return nil, client.ErrInvalidResponse
+	}
+	return items, nil
+}
+
+func updatePlaylistItem(ctx context.Context, spotify UpdateSession, playlistID string, position int, newTrackID string) (updateResult, error) {
+	before, err := spotify.GetPlaylist(ctx, playlistID)
+	if err != nil {
+		return updateResult{}, err
+	}
+	if before.ItemCount == nil || strings.TrimSpace(before.SnapshotID) == "" {
+		return updateResult{}, client.ErrInvalidResponse
+	}
+	total := before.ItemCount.Total
+	if position >= total {
+		return updateResult{}, errRemoveOutside
+	}
+	items, err := readPlaylistItems(ctx, spotify, playlistID, total)
+	if err != nil {
+		return updateResult{}, err
+	}
+	target := items[position]
+	oldURI := "spotify:track:" + target.ID
+	if target.Type != "track" || !spotifyref.ValidID(target.ID) || target.URI != oldURI {
+		return updateResult{}, errRemoveNonTrack
+	}
+	if target.ID == newTrackID {
+		return updateResult{}, errUpdateSame
+	}
+	oldCount, newCount := 0, 0
+	for _, item := range items {
+		if item.Type == "track" && item.ID == target.ID {
+			oldCount++
+		}
+		if item.Type == "track" && item.ID == newTrackID {
+			newCount++
+		}
+	}
+	if oldCount != 1 {
+		return updateResult{}, errRemoveDuplicate
+	}
+	if newCount != 0 {
+		return updateResult{}, errUpdateDuplicate
+	}
+	current, err := spotify.GetPlaylist(ctx, playlistID)
+	if err != nil {
+		return updateResult{}, err
+	}
+	if current.ItemCount == nil || current.ItemCount.Total != total || current.SnapshotID != before.SnapshotID {
+		return updateResult{}, errUpdateChanged
+	}
+	newURI := "spotify:track:" + newTrackID
+	addSnapshot, err := spotify.AddPlaylistItems(ctx, playlistID, []string{newURI}, &position)
+	if err != nil {
+		var rejected *client.MutationRejectedError
+		if !errors.As(err, &rejected) {
+			return updateResult{}, &ReplacementReconciliationError{Cause: err, Phase: "add", PlaylistID: playlistID, Position: position, OldTrackID: target.ID, NewTrackID: newTrackID}
+		}
+		return updateResult{}, err
+	}
+	verificationError := func(cause error) error {
+		if cause == nil {
+			cause = errUpdateUnverified
+		} else {
+			cause = errors.Join(errUpdateUnverified, cause)
+		}
+		return &ReplacementReconciliationError{
+			Cause: cause, Phase: "verify", PlaylistID: playlistID, Position: position,
+			OldTrackID: target.ID, NewTrackID: newTrackID, AddSnapshot: addSnapshot,
+		}
+	}
+	applied, err := spotify.GetPlaylist(ctx, playlistID)
+	if err != nil {
+		return updateResult{}, verificationError(err)
+	}
+	if applied.ItemCount == nil || applied.ItemCount.Total != total+1 || applied.SnapshotID != addSnapshot {
+		return updateResult{}, verificationError(nil)
+	}
+	appliedItems, err := readPlaylistItems(ctx, spotify, playlistID, total+1)
+	if err != nil {
+		return updateResult{}, verificationError(err)
+	}
+	expectedItems := make([]client.PlaylistItem, total+1)
+	copy(expectedItems, items[:position])
+	expectedItems[position] = client.PlaylistItem{Type: "track", ID: newTrackID, URI: newURI}
+	copy(expectedItems[position+1:], items[position:])
+	if !slices.EqualFunc(expectedItems, appliedItems, func(expected, actual client.PlaylistItem) bool {
+		return expected.Type == actual.Type && expected.ID == actual.ID && expected.URI == actual.URI
+	}) {
+		return updateResult{}, verificationError(nil)
+	}
+	stable, err := spotify.GetPlaylist(ctx, playlistID)
+	if err != nil {
+		return updateResult{}, verificationError(err)
+	}
+	if stable.ItemCount == nil || stable.ItemCount.Total != total+1 || stable.SnapshotID != addSnapshot {
+		return updateResult{}, verificationError(nil)
+	}
+	finalSnapshot, err := spotify.RemovePlaylistItemAtPosition(ctx, playlistID, oldURI, position+1, addSnapshot)
+	if err != nil {
+		var rejected *client.MutationRejectedError
+		if !errors.As(err, &rejected) {
+			return updateResult{}, &ReplacementReconciliationError{Cause: err, Phase: "remove", PlaylistID: playlistID, Position: position, OldTrackID: target.ID, NewTrackID: newTrackID, AddSnapshot: addSnapshot}
+		}
+		return updateResult{}, &PartialReplacementError{Cause: err, PlaylistID: playlistID, Position: position, OldTrackID: target.ID, NewTrackID: newTrackID, AddSnapshot: addSnapshot}
+	}
+	return updateResult{Position: position, OldTrackID: target.ID, NewTrackID: newTrackID, SnapshotID: finalSnapshot}, nil
 }
 
 func newItemsList(deps Dependencies) *cobra.Command {
@@ -578,7 +804,8 @@ func openSession[T authenticatedSession](command *cobra.Command, backendValue *s
 func classifyMutation(err error) error {
 	switch {
 	case errors.Is(err, errAddPositionExceeds), errors.Is(err, errRemoveOutside),
-		errors.Is(err, errRemoveNonTrack), errors.Is(err, errRemoveDuplicate):
+		errors.Is(err, errRemoveNonTrack), errors.Is(err, errRemoveDuplicate),
+		errors.Is(err, errUpdateSame), errors.Is(err, errUpdateDuplicate):
 		return exitcode.New(exitcode.Usage, err)
 	default:
 		return classify(err)

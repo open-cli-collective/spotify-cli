@@ -130,6 +130,7 @@ sptfy playlists get spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
 sptfy playlists items list spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID
 sptfy playlists items add spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID TRACK_ID --position 1
 sptfy playlists items remove spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID 1
+sptfy playlists items update spotify:playlist:YOUR_OWN_OR_COLLABORATIVE_PLAYLIST_ID 1 --item REPLACEMENT_TRACK_ID
 ```
 
 Lists default to 10 and allow 1–50 results. Default fields are
@@ -152,13 +153,17 @@ URLs. It preserves argument order and duplicates, appends by default, and
 accepts `--position` from zero through the current item count. Batches larger
 than 100 use ordered requests. Remove accepts one absolute zero-based position;
 it refuses non-track items and duplicate track URIs because Spotify's current
-removal operation is URI-based rather than position-based. Both commands
+removal operation is URI-based rather than position-based. Update replaces one
+unique track at an exact position by adding the replacement before removing the
+original. It refuses unsafe non-track, duplicate, same-item, and stale states.
+All three commands
 require the two read and two modify scopes and emit reversible, headerless tab
 records for applied mutations:
 
 ```text
 added<TAB>playlist-id<TAB>start-position<TAB>count<TAB>snapshot-id
 removed<TAB>playlist-id<TAB>position<TAB>track-id<TAB>snapshot-id
+updated<TAB>playlist-id<TAB>position<TAB>old-track-id<TAB>new-track-id<TAB>snapshot-id
 ```
 
 The add record retains the position and count needed for an inverse operation.
@@ -167,11 +172,29 @@ inserted track ID is unique in the playlist; intentional or preexisting
 duplicates must first be made unique by another Spotify client. The remove
 record can be inverted by adding `track-id` at `position`. If a later add chunk
 is definitely rejected, the confirmed-prefix record is emitted and the command
-exits nonzero; a first-chunk definite rejection emits no record. When transport
-or a successful but invalid response makes an add or remove outcome uncertain,
-the command emits no stdout record and its nonzero error says to inspect and
-reconcile before retrying. The uncertain change may have applied. Remove emits
-a stdout record only after confirmed success.
+exits nonzero; a first-chunk definite rejection emits no record. When transport,
+an ambiguous provider `5xx`, or a successful but invalid response makes an add
+or remove outcome uncertain, the command emits no stdout record and its nonzero
+error says to inspect and reconcile before retrying. The uncertain change may
+have applied. Remove emits a stdout record only after confirmed success.
+
+The update record is inverted by updating the reported position with
+`old-track-id`. Update emits no record unless both steps are confirmed. A
+definite provider `4xx` removal rejection after a successful add reports only
+the confirmed facts: the add succeeded at the included snapshot, and this
+command's removal was rejected without applying. It directs inspection of the
+current playlist before recovery or retry because collaborators may have moved
+or removed either item. An uncertain add reports the playlist, position, and
+old/new IDs but has no confirmed post-write snapshot. An uncertain removal
+additionally reports the confirmed add snapshot. Provider `5xx` responses are
+uncertain; provider details remain hidden, so inspect before retrying because
+either write may have applied.
+Before removing the original, update verifies the confirmed add snapshot and
+item count around a complete identity-and-order read. A mismatch or read failure
+leaves the original untouched, emits no record, and reports the confirmed add
+snapshot for reconciliation. The final delete identifies the original's exact
+post-add position under that snapshot, so a concurrently added duplicate is not
+also removed.
 
 ## Saved tracks
 
@@ -229,6 +252,7 @@ SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
 SPOTIFY_CLI_LIVE_PLAYLIST_ID=your_playlist_id \
 SPOTIFY_CLI_LIVE_PLAYLIST_ITEM_IDS=first_item_id,second_item_id,third_item_id \
 SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_TRACK_ID=a_distinct_track_id \
+SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY='isrc:a_unique_isrc' \
 SPOTIFY_CLIENT_ID=your_client_id \
 make live-smoke
 ```
@@ -237,6 +261,9 @@ make live-smoke
 entire playlist. Before mutating, the harness captures one complete runtime page
 of up to 50 IDs, requires that prefix and an absent mutation track, and uses the
 captured sequence for exact restoration.
+`SPOTIFY_CLI_LIVE_PLAYLIST_MUTATION_SEARCH_QUERY` must return that mutation
+track as its first ID-only result; the harness verifies the match before any
+playlist write.
 
 The harness is interactive because Spotify authorization opens a browser. It
 exercises setup, identity, refresh, search/pagination shapes, catalog gets,

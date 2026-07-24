@@ -120,6 +120,43 @@ func TestInteractiveInitUsesPromptedBackendForStoreAndConfig(t *testing.T) {
 	}
 }
 
+func TestInteractiveInitBackendChangeReplacesDestinationCredential(t *testing.T) {
+	harness := newInitHarness(t)
+	cfg := config.Default()
+	cfg.Keyring.Backend = "file"
+	if err := config.Save(harness.scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	key := "default/" + credentials.OAuthTokenKey
+	harness.store.values[key] = "stale-destination-credential"
+	harness.interactive = true
+	harness.prompt = func(setup *Setup) error {
+		setup.ClientID = "client-id"
+		setup.Backend = "keychain"
+		return nil
+	}
+	if err := harness.execute("--no-verify"); err != nil {
+		t.Fatal(err)
+	}
+	if harness.store.values[key] == "stale-destination-credential" || harness.store.setCalls != 1 {
+		t.Fatalf("credential = %q, set calls = %d", harness.store.values[key], harness.store.setCalls)
+	}
+}
+
+func TestNonInteractiveInitBackendChangeStillRequiresOverwrite(t *testing.T) {
+	harness := newInitHarness(t)
+	cfg := config.Default()
+	cfg.Keyring.Backend = "file"
+	if err := config.Save(harness.scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+	err := harness.execute("--backend", "keychain", "--non-interactive", "--client-id", "client-id", "--no-verify")
+	if !errors.Is(err, credstore.ErrExists) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestNonInteractiveInitNamesMissingClientID(t *testing.T) {
 	harness := newInitHarness(t)
 	called := false

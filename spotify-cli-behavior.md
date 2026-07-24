@@ -32,6 +32,7 @@ The currently implemented surface contains exactly these commands:
 - `sptfy library albums remove <album-reference>...`
 - `sptfy playlists list`
 - `sptfy playlists get <playlist-reference>`
+- `sptfy playlists items list <playlist-reference>`
 
 The product exclusions under [Future boundaries](#future-boundaries) remain
 directional and non-normative until promoted into command sections.
@@ -339,7 +340,36 @@ The command accepts one raw 22-character ID, matching playlist URI, or
 canonical playlist URL under the same strict validation used by catalog gets.
 It uses one fixed-origin `GET /playlists/{id}` request. Detail output uses the
 stable identity header, and selected `ID` or `PLAYLIST` fields are not repeated
-below it. Playlist items and every playlist mutation are outside this surface.
+below it. Spotify currently permits this read only for playlists the current
+user owns or collaborates on. Every playlist mutation is outside this surface.
+
+### `sptfy playlists items list <playlist-reference>`
+
+The command accepts the same playlist reference forms as `playlists get` and
+uses the current fixed-origin `GET /playlists/{id}/items` endpoint with
+`additional_types=episode`. It defaults to 10 items and accepts 1–50. Its
+opaque continuation token is bound to the playlist-items surface and parsed
+playlist ID; provider response URLs are never followed. The same current
+provider owner-or-collaborator restriction applies.
+
+Normal output renders `Playlist ID: <id>` once, followed by:
+
+```text
+POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION
+```
+
+`POSITION` is the absolute zero-based page offset plus row index. `TYPE` is
+`track`, `episode`, `local`, or `unavailable` for known wrapper shapes; a
+future provider type is sanitized and preserved, while a non-null item without
+a type renders `unknown`. Only track rows populate artist and album
+breadcrumbs. Episode, local, unavailable, and unknown rows do not fabricate
+track metadata.
+
+`--extended` adds `URI`, `URL`, `ADDED_AT`, `ADDED_BY_ID`, `DISC_NUMBER`,
+`TRACK_NUMBER`, `EXPLICIT`, and `RESTRICTION`. `--include-artwork` uses album
+artwork for tracks and item artwork for episodes. `--fields` follows the
+standard selection precedence. `--id` overrides every other shape flag,
+omits the parent line, and emits only entries with a Spotify ID.
 
 ## Request behavior
 
@@ -446,6 +476,15 @@ overwrite hint before provider I/O. Provider fixtures verify fixed paths,
 requested page metadata, non-negative totals/item counts, item bounds,
 response shape, and that provider continuation URLs are never followed.
 
+Playlist-item tests cover accepted parent references, 1/50 bounds, absolute
+positions across resumed pages, every known mixed-item shape plus future and
+untyped items, exact parent/default/selected/extended/artwork/ID-only/empty
+output, and validation before authentication. Provider fixtures prove the
+current `/items` path and `item` member, exact page metadata, nonnegative
+durations, required arrays, present item IDs, fixed origin, and ignored
+provider pagination URLs. The static and opt-in live smokes prove the first
+three configured item IDs, their positions, continuation, and ID-only order.
+
 Live tests are opt-in and use a dedicated Spotify application/account plus a
 hermetic state directory and an explicitly selected encrypted-file credential
 backend rooted there. They never run in ordinary CI or mutate a developer's
@@ -455,6 +494,6 @@ normal Spotify configuration or OS keychain.
 
 Future paginated commands use `-m/--max`, `--next-page-token`, and stderr
 continuation hints. Future resource reads remain text-only and carry the
-relationship breadcrumbs defined above. Playlist items and mutations,
-playback, recommendations, podcasts, audiobooks, raw HTTP access, and local
-media-library synchronization remain out of scope until separately specified.
+relationship breadcrumbs defined above. Playlist mutations, playback,
+recommendations, podcasts, audiobooks, raw HTTP access, and local media-library
+synchronization remain out of scope until separately specified.

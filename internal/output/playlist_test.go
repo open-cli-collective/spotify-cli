@@ -77,3 +77,55 @@ func TestRenderPlaylistDetailKeepsIdentityOnlyInHeader(t *testing.T) {
 		t.Fatalf("detail=%q want=%q", got, want)
 	}
 }
+
+func TestPlaylistItemFieldsAndMixedRendering(t *testing.T) {
+	explicit := true
+	items := []client.PlaylistItem{
+		{Type: "track", ID: "track-1", Name: "Song | live\ncut", Artists: []client.Artist{{ID: "artist-1", Name: "Ada"}}, AlbumID: "album-1", AlbumName: "Album", DurationMS: intPointer(61000), URI: "spotify:track:track-1", URL: "https://track", AddedAt: "2026-07-24T12:00:00Z", AddedByID: "owner-1", DiscNumber: 1, TrackNumber: 2, Explicit: &explicit, Restriction: "market", Images: []client.Image{{URL: "https://track-image"}}},
+		{Type: "episode", ID: "episode-1", Name: "Episode", DurationMS: intPointer(62000), Images: []client.Image{{URL: "https://episode-image"}}},
+		{Type: "local", Name: "Local", DurationMS: intPointer(63000)},
+		{Type: "unavailable"},
+		{Type: "future | type\nline", Name: "Future", DurationMS: intPointer(64000)},
+		{Type: "unknown", Name: "Untyped"},
+	}
+	fields, err := SelectPlaylistItemFields("", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n" +
+		"20 | track | track-1 | Song live cut | artist-1 | Ada | album-1 | Album | 1:01\n" +
+		"21 | episode | episode-1 | Episode | - | - | - | - | 1:02\n" +
+		"22 | local | - | Local | - | - | - | - | 1:03\n" +
+		"23 | unavailable | - | - | - | - | - | - | -\n" +
+		"24 | future type line | - | Future | - | - | - | - | 1:04\n" +
+		"25 | unknown | - | Untyped | - | - | - | - | -\n"
+	if got := RenderPlaylistItems(items, 20, fields); got != want {
+		t.Fatalf("rendered=%q want=%q", got, want)
+	}
+
+	fields, err = SelectPlaylistItemFields("item,TYPE,item,artwork", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = "ITEM | TYPE | ARTWORK\nSong live cut | track | -x- https://track-image\nEpisode | episode | -x- https://episode-image\nLocal | local | -\n- | unavailable | -\nFuture | future type line | -\nUntyped | unknown | -\n"
+	if got := RenderPlaylistItems(items, 0, fields); got != want {
+		t.Fatalf("selected=%q want=%q", got, want)
+	}
+	if got := RenderPlaylistItemIDs(items); got != "track-1\nepisode-1\n" {
+		t.Fatalf("ids=%q", got)
+	}
+}
+
+func TestPlaylistItemExtendedAndEmptyRendering(t *testing.T) {
+	fields, err := SelectPlaylistItemFields("", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHeader := "POSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION | URI | URL | ADDED_AT | ADDED_BY_ID | DISC_NUMBER | TRACK_NUMBER | EXPLICIT | RESTRICTION | ARTWORK\n"
+	if got := RenderPlaylistItems(nil, 0, fields); got != wantHeader {
+		t.Fatalf("empty=%q", got)
+	}
+	if _, err := SelectPlaylistItemFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: POSITION, TYPE") {
+		t.Fatalf("error=%v", err)
+	}
+}

@@ -162,3 +162,173 @@ func playlistFieldNames() string {
 	}
 	return strings.Join(values, ", ")
 }
+
+// PlaylistItemField identifies one stable playlist-item table column.
+type PlaylistItemField string
+
+// Stable playlist-item output fields.
+const (
+	PlaylistItemPosition    PlaylistItemField = "POSITION"
+	PlaylistItemType        PlaylistItemField = "TYPE"
+	PlaylistItemID          PlaylistItemField = "ID"
+	PlaylistItemName        PlaylistItemField = "ITEM"
+	PlaylistItemArtistIDs   PlaylistItemField = "ARTIST_IDS"
+	PlaylistItemArtists     PlaylistItemField = "ARTISTS"
+	PlaylistItemAlbumID     PlaylistItemField = "ALBUM_ID"
+	PlaylistItemAlbum       PlaylistItemField = "ALBUM"
+	PlaylistItemDuration    PlaylistItemField = "DURATION"
+	PlaylistItemURI         PlaylistItemField = "URI"
+	PlaylistItemURL         PlaylistItemField = "URL"
+	PlaylistItemAddedAt     PlaylistItemField = "ADDED_AT"
+	PlaylistItemAddedByID   PlaylistItemField = "ADDED_BY_ID"
+	PlaylistItemDiscNumber  PlaylistItemField = "DISC_NUMBER"
+	PlaylistItemTrackNumber PlaylistItemField = "TRACK_NUMBER"
+	PlaylistItemExplicit    PlaylistItemField = "EXPLICIT"
+	PlaylistItemRestriction PlaylistItemField = "RESTRICTION"
+	PlaylistItemArtwork     PlaylistItemField = "ARTWORK"
+)
+
+var (
+	defaultPlaylistItemFields = []PlaylistItemField{
+		PlaylistItemPosition, PlaylistItemType, PlaylistItemID, PlaylistItemName,
+		PlaylistItemArtistIDs, PlaylistItemArtists, PlaylistItemAlbumID, PlaylistItemAlbum, PlaylistItemDuration,
+	}
+	extendedPlaylistItemFields = []PlaylistItemField{
+		PlaylistItemURI, PlaylistItemURL, PlaylistItemAddedAt, PlaylistItemAddedByID,
+		PlaylistItemDiscNumber, PlaylistItemTrackNumber, PlaylistItemExplicit, PlaylistItemRestriction,
+	}
+	allPlaylistItemFields = append(append(append([]PlaylistItemField(nil), defaultPlaylistItemFields...), extendedPlaylistItemFields...), PlaylistItemArtwork)
+)
+
+// SelectPlaylistItemFields applies default, widening, artwork, then explicit-field precedence.
+func SelectPlaylistItemFields(csv string, extended, includeArtwork bool) ([]PlaylistItemField, error) {
+	fields := append([]PlaylistItemField(nil), defaultPlaylistItemFields...)
+	if extended {
+		fields = append(fields, extendedPlaylistItemFields...)
+	}
+	if includeArtwork {
+		fields = append(fields, PlaylistItemArtwork)
+	}
+	if strings.TrimSpace(csv) == "" {
+		return fields, nil
+	}
+	defaults := fields
+	fields = nil
+	seen := map[PlaylistItemField]bool{}
+	for _, raw := range strings.Split(csv, ",") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		field := PlaylistItemField(strings.ToUpper(trimmed))
+		if !containsPlaylistItemField(field) {
+			return nil, fmt.Errorf("unknown playlist item field %q; valid fields: %s", trimmed, playlistItemFieldNames())
+		}
+		if !seen[field] {
+			fields = append(fields, field)
+			seen[field] = true
+		}
+	}
+	if len(fields) == 0 {
+		return defaults, nil
+	}
+	return fields, nil
+}
+
+// RenderPlaylistItems renders one ordered pipe-delimited table.
+func RenderPlaylistItems(items []client.PlaylistItem, offset int, fields []PlaylistItemField) string {
+	var rendered strings.Builder
+	headers := make([]string, len(fields))
+	for index, field := range fields {
+		headers[index] = string(field)
+	}
+	rendered.WriteString(strings.Join(headers, " | "))
+	rendered.WriteByte('\n')
+	for index, item := range items {
+		cells := make([]string, len(fields))
+		for fieldIndex, field := range fields {
+			cells[fieldIndex] = playlistItemCell(item, offset+index, field)
+		}
+		rendered.WriteString(strings.Join(cells, " | "))
+		rendered.WriteByte('\n')
+	}
+	return rendered.String()
+}
+
+// RenderPlaylistItemIDs renders only present Spotify item IDs.
+func RenderPlaylistItemIDs(items []client.PlaylistItem) string {
+	var rendered strings.Builder
+	for _, item := range items {
+		if item.ID != "" {
+			rendered.WriteString(cell(item.ID))
+			rendered.WriteByte('\n')
+		}
+	}
+	return rendered.String()
+}
+
+func playlistItemCell(item client.PlaylistItem, position int, field PlaylistItemField) string {
+	switch field {
+	case PlaylistItemPosition:
+		return strconv.Itoa(position)
+	case PlaylistItemType:
+		return cell(item.Type)
+	case PlaylistItemID:
+		return cell(item.ID)
+	case PlaylistItemName:
+		return cell(item.Name)
+	case PlaylistItemArtistIDs:
+		return cell(joinArtists(item.Artists, func(artist client.Artist) string { return artist.ID }))
+	case PlaylistItemArtists:
+		return cell(joinArtists(item.Artists, func(artist client.Artist) string { return artist.Name }))
+	case PlaylistItemAlbumID:
+		return cell(item.AlbumID)
+	case PlaylistItemAlbum:
+		return cell(item.AlbumName)
+	case PlaylistItemDuration:
+		if item.DurationMS == nil {
+			return "-"
+		}
+		return duration(*item.DurationMS)
+	case PlaylistItemURI:
+		return cell(item.URI)
+	case PlaylistItemURL:
+		return cell(item.URL)
+	case PlaylistItemAddedAt:
+		return cell(item.AddedAt)
+	case PlaylistItemAddedByID:
+		return cell(item.AddedByID)
+	case PlaylistItemDiscNumber:
+		return positiveInt(item.DiscNumber)
+	case PlaylistItemTrackNumber:
+		return positiveInt(item.TrackNumber)
+	case PlaylistItemExplicit:
+		if item.Explicit == nil {
+			return "-"
+		}
+		return strconv.FormatBool(*item.Explicit)
+	case PlaylistItemRestriction:
+		return cell(item.Restriction)
+	case PlaylistItemArtwork:
+		return renderArtwork(item.Images)
+	default:
+		return "-"
+	}
+}
+
+func containsPlaylistItemField(field PlaylistItemField) bool {
+	for _, candidate := range allPlaylistItemFields {
+		if candidate == field {
+			return true
+		}
+	}
+	return false
+}
+
+func playlistItemFieldNames() string {
+	values := make([]string, len(allPlaylistItemFields))
+	for index, field := range allPlaylistItemFields {
+		values[index] = string(field)
+	}
+	return strings.Join(values, ", ")
+}

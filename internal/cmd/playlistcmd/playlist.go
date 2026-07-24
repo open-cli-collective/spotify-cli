@@ -29,6 +29,7 @@ type Session interface {
 	Scopes() []string
 	ListCurrentUserPlaylists(context.Context, int, int) (client.PlaylistPage, error)
 	GetPlaylist(context.Context, string) (client.Playlist, error)
+	ListPlaylistItems(context.Context, string, int, int) (client.PlaylistItemPage, error)
 }
 
 // SessionOpener opens the authenticated capability required by playlist commands.
@@ -59,8 +60,82 @@ func New(deps Dependencies) *cobra.Command {
 		Use: "playlists", Aliases: []string{"playlist"}, Short: "Read Spotify playlists",
 		Args: noArgs("playlists"), RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
-	command.AddCommand(newList(deps), newGet(deps))
+	command.AddCommand(newList(deps), newGet(deps), newItems(deps))
 	return command
+}
+
+func newItems(deps Dependencies) *cobra.Command {
+	command := &cobra.Command{
+		Use: "items", Short: "Read ordered Spotify playlist items", Args: noArgs("items"),
+		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
+	}
+	command.AddCommand(newItemsList(deps))
+	return command
+}
+
+func newItemsList(deps Dependencies) *cobra.Command {
+	opts := listOptions{max: 10}
+	command := &cobra.Command{
+		Use: "list <spotify-id-uri-or-url>", Short: "List ordered Spotify playlist items",
+		Args: func(command *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(command, args); err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			return nil
+		},
+		RunE: func(command *cobra.Command, args []string) error {
+			id, err := spotifyref.Parse(args[0], spotifyref.Playlist)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+			if opts.max < 1 || opts.max > 50 {
+				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
+			}
+			var fields []output.PlaylistItemField
+			if !opts.id {
+				fields, err = output.SelectPlaylistItemFields(opts.fields, opts.extended, opts.artwork)
+				if err != nil {
+					return exitcode.New(exitcode.Usage, err)
+				}
+			}
+			scope := playlistItemPageScope(id)
+			offset, err := pagetoken.Decode(scope, opts.nextPageToken, math.MaxInt-50)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
+			}
+			authenticated, err := openSession(command, deps)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = authenticated.Close() }()
+			page, err := authenticated.ListPlaylistItems(command.Context(), id, opts.max, offset)
+			if err != nil {
+				return classify(err)
+			}
+			rendered := output.RenderPlaylistItemIDs(page.Items)
+			if !opts.id {
+				rendered = "Playlist ID: " + id + "\n" + output.RenderPlaylistItems(page.Items, page.Offset, fields)
+			}
+			if err := writeOutput(command, rendered); err != nil {
+				return err
+			}
+			if page.HasNext {
+				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(scope, page.Offset+page.Limit)); err != nil {
+					return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
+				}
+			}
+			return nil
+		},
+	}
+	flags := command.Flags()
+	flags.IntVarP(&opts.max, "max", "m", 10, "Maximum results (1-50)")
+	flags.StringVar(&opts.nextPageToken, "next-page-token", "", "Opaque continuation token")
+	addOutputFlags(command, &opts.options, "item IDs")
+	return command
+}
+
+func playlistItemPageScope(id string) string {
+	return "playlist-items:" + id
 }
 
 func newList(deps Dependencies) *cobra.Command {

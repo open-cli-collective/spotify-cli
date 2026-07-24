@@ -2,6 +2,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -133,6 +134,35 @@ type Playlist struct {
 // PlaylistPage is one validated current-user playlist page.
 type PlaylistPage struct {
 	Items   []Playlist
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
+// PlaylistItem is one flattened mixed-media playlist entry.
+type PlaylistItem struct {
+	Type        string
+	ID          string
+	Name        string
+	Artists     []Artist
+	AlbumID     string
+	AlbumName   string
+	DurationMS  *int
+	URI         string
+	URL         string
+	AddedAt     string
+	AddedByID   string
+	DiscNumber  int
+	TrackNumber int
+	Explicit    *bool
+	Restriction string
+	Images      []Image
+}
+
+// PlaylistItemPage is one validated playlist-item page.
+type PlaylistItemPage struct {
+	Items   []PlaylistItem
 	Offset  int
 	Limit   int
 	Total   int
@@ -303,6 +333,147 @@ func (client Client) ListCurrentUserPlaylists(ctx context.Context, limit, offset
 
 func validPlaylist(playlist Playlist) bool {
 	return spotifyref.ValidID(playlist.ID) && playlist.ItemCount != nil && playlist.ItemCount.Total >= 0
+}
+
+type playlistItemWrapper struct {
+	AddedAt string `json:"added_at"`
+	AddedBy struct {
+		ID string `json:"id"`
+	} `json:"added_by"`
+	IsLocal bool            `json:"is_local"`
+	Item    json.RawMessage `json:"item"`
+}
+
+type playlistItemPageResponse struct {
+	Items  *[]playlistItemWrapper `json:"items"`
+	Limit  int                    `json:"limit"`
+	Next   *string                `json:"next"`
+	Offset int                    `json:"offset"`
+	Total  int                    `json:"total"`
+}
+
+// ListPlaylistItems returns one playlist-item page without following provider pagination URLs.
+func (client Client) ListPlaylistItems(ctx context.Context, id string, limit, offset int) (PlaylistItemPage, error) {
+	if !spotifyref.ValidID(id) || limit < 1 || limit > 50 || offset < 0 {
+		return PlaylistItemPage{}, ErrInvalidResponse
+	}
+	values := url.Values{
+		"additional_types": {"episode"},
+		"limit":            {strconv.Itoa(limit)},
+		"offset":           {strconv.Itoa(offset)},
+	}
+	var response playlistItemPageResponse
+	if err := client.getJSON(ctx, "/playlists/"+id+"/items?"+values.Encode(), &response); err != nil {
+		return PlaylistItemPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return PlaylistItemPage{}, ErrInvalidResponse
+	}
+	itemCount := len(*response.Items)
+	hasNext := response.Next != nil && *response.Next != ""
+	if itemCount > 0 && (itemCount > response.Total || response.Offset > response.Total-itemCount) ||
+		hasNext && itemCount != response.Limit ||
+		hasNext != (response.Offset < response.Total && itemCount < response.Total-response.Offset) {
+		return PlaylistItemPage{}, ErrInvalidResponse
+	}
+	items := make([]PlaylistItem, len(*response.Items))
+	for index, wrapper := range *response.Items {
+		item, err := decodePlaylistItem(wrapper)
+		if err != nil {
+			return PlaylistItemPage{}, err
+		}
+		items[index] = item
+	}
+	return PlaylistItemPage{
+		Items: items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: hasNext,
+	}, nil
+}
+
+func decodePlaylistItem(wrapper playlistItemWrapper) (PlaylistItem, error) {
+	item := PlaylistItem{AddedAt: wrapper.AddedAt, AddedByID: wrapper.AddedBy.ID}
+	raw := bytes.TrimSpace(wrapper.Item)
+	if len(raw) == 0 {
+		return PlaylistItem{}, ErrInvalidResponse
+	}
+	if bytes.Equal(raw, []byte("null")) {
+		item.Type = "unavailable"
+		return item, nil
+	}
+	var base struct {
+		Type         *string      `json:"type"`
+		ID           *string      `json:"id"`
+		Name         string       `json:"name"`
+		DurationMS   *int         `json:"duration_ms"`
+		URI          string       `json:"uri"`
+		ExternalURLs ExternalURLs `json:"external_urls"`
+		Explicit     *bool        `json:"explicit"`
+		Restrictions Restriction  `json:"restrictions"`
+		Images       *[]Image     `json:"images"`
+	}
+	if json.Unmarshal(raw, &base) != nil || base.DurationMS != nil && *base.DurationMS < 0 ||
+		base.ID != nil && !spotifyref.ValidID(*base.ID) {
+		return PlaylistItem{}, ErrInvalidResponse
+	}
+	item.Type = "unknown"
+	if base.Type != nil && strings.TrimSpace(*base.Type) != "" {
+		item.Type = *base.Type
+	}
+	if wrapper.IsLocal {
+		item.Type = "local"
+	}
+	if (item.Type == "track" || item.Type == "episode") && base.ID == nil {
+		return PlaylistItem{}, ErrInvalidResponse
+	}
+	if base.ID != nil {
+		item.ID = *base.ID
+	}
+	item.Name = base.Name
+	item.DurationMS = base.DurationMS
+	item.URI = base.URI
+	item.URL = base.ExternalURLs.Spotify
+	item.Explicit = base.Explicit
+	item.Restriction = base.Restrictions.Reason
+	if item.Type == "episode" {
+		if base.Images == nil {
+			return PlaylistItem{}, ErrInvalidResponse
+		}
+		item.Images = *base.Images
+	}
+	if item.Type == "track" {
+		var track struct {
+			Artists     *[]Artist `json:"artists"`
+			DiscNumber  int       `json:"disc_number"`
+			TrackNumber int       `json:"track_number"`
+			Album       *struct {
+				ID     string   `json:"id"`
+				Name   string   `json:"name"`
+				Images *[]Image `json:"images"`
+			} `json:"album"`
+		}
+		if json.Unmarshal(raw, &track) != nil || track.Artists == nil || len(*track.Artists) == 0 ||
+			track.Album == nil || !spotifyref.ValidID(track.Album.ID) || track.Album.Images == nil {
+			return PlaylistItem{}, ErrInvalidResponse
+		}
+		for _, artist := range *track.Artists {
+			if !spotifyref.ValidID(artist.ID) {
+				return PlaylistItem{}, ErrInvalidResponse
+			}
+		}
+		item.Artists = *track.Artists
+		item.AlbumID = track.Album.ID
+		item.AlbumName = track.Album.Name
+		item.DiscNumber = track.DiscNumber
+		item.TrackNumber = track.TrackNumber
+		item.Images = *track.Album.Images
+	}
+	if item.Type != "track" && item.Type != "episode" {
+		item.Explicit = nil
+		item.Restriction = ""
+		item.Images = nil
+	}
+	return item, nil
 }
 
 type trackPageResponse struct {

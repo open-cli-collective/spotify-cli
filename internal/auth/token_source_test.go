@@ -113,7 +113,7 @@ func TestOAuthTokenUsesExactFallbackScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"user-library-modify", "user-library-read", "user-read-private"}
+	want := []string{"playlist-read-collaborative", "playlist-read-private", "user-library-modify", "user-library-read", "user-read-private"}
 	if !slices.Equal(envelope.Scopes, want) {
 		t.Fatalf("scopes=%v want=%v", envelope.Scopes, want)
 	}

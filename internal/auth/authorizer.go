@@ -20,6 +20,10 @@ import (
 )
 
 const (
+	// ScopePlaylistReadCollaborative permits collaborative playlist reads.
+	ScopePlaylistReadCollaborative = "playlist-read-collaborative"
+	// ScopePlaylistReadPrivate permits private playlist reads.
+	ScopePlaylistReadPrivate = "playlist-read-private"
 	// ScopeUserLibraryModify permits saved-library mutations.
 	ScopeUserLibraryModify = "user-library-modify"
 	// ScopeUserLibraryRead permits saved-library reads.
@@ -46,7 +50,7 @@ var (
 )
 
 func requestedScopes() []string {
-	return []string{ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
+	return []string{ScopePlaylistReadCollaborative, ScopePlaylistReadPrivate, ScopeUserLibraryModify, ScopeUserLibraryRead, ScopeUserReadPrivate}
 }
 
 // Endpoints selects Spotify OAuth endpoints. Production uses the zero value.

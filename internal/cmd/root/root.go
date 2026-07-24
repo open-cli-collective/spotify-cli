@@ -20,6 +20,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/librarycmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/mecmd"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/playlistcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/searchcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/setcredential"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
@@ -140,6 +141,12 @@ func New(deps Dependencies) *cobra.Command {
 	})...)
 	cmd.AddCommand(librarycmd.New(librarycmd.Dependencies{
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (librarycmd.Session, error) {
+			return sessionOpener.Open(ctx, backend, backendSet)
+		},
+		Backend: &backend,
+	}))
+	cmd.AddCommand(playlistcmd.New(playlistcmd.Dependencies{
+		OpenSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.Session, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
 		Backend: &backend,

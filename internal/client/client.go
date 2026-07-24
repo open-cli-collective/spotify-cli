@@ -104,6 +104,41 @@ type Track struct {
 	Restrictions Restriction  `json:"restrictions"`
 }
 
+// PlaylistOwner is the stable owner identity included with a playlist.
+type PlaylistOwner struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+// PlaylistItemCount is the item-count subset returned with a playlist.
+type PlaylistItemCount struct {
+	Total int `json:"total"`
+}
+
+// Playlist is the typed subset of Spotify playlist data rendered by the CLI.
+type Playlist struct {
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Owner         PlaylistOwner      `json:"owner"`
+	ItemCount     *PlaylistItemCount `json:"items"`
+	Public        *bool              `json:"public"`
+	Collaborative bool               `json:"collaborative"`
+	Description   string             `json:"description"`
+	URI           string             `json:"uri"`
+	ExternalURLs  ExternalURLs       `json:"external_urls"`
+	Images        []Image            `json:"images"`
+	SnapshotID    string             `json:"snapshot_id"`
+}
+
+// PlaylistPage is one validated current-user playlist page.
+type PlaylistPage struct {
+	Items   []Playlist
+	Offset  int
+	Limit   int
+	Total   int
+	HasNext bool
+}
+
 // TrackPage is one validated Spotify search page.
 type TrackPage struct {
 	Items   []Track
@@ -216,6 +251,58 @@ func (client Client) GetArtist(ctx context.Context, id string) (Artist, error) {
 		return Artist{}, ErrInvalidResponse
 	}
 	return artist, nil
+}
+
+// GetPlaylist returns one playlist by ID.
+func (client Client) GetPlaylist(ctx context.Context, id string) (Playlist, error) {
+	var playlist Playlist
+	if !spotifyref.ValidID(id) {
+		return Playlist{}, ErrInvalidResponse
+	}
+	if err := client.getJSON(ctx, "/playlists/"+id, &playlist); err != nil {
+		return Playlist{}, err
+	}
+	if playlist.ID != id || !validPlaylist(playlist) {
+		return Playlist{}, ErrInvalidResponse
+	}
+	return playlist, nil
+}
+
+type playlistPageResponse struct {
+	Items  *[]Playlist `json:"items"`
+	Limit  int         `json:"limit"`
+	Next   *string     `json:"next"`
+	Offset int         `json:"offset"`
+	Total  int         `json:"total"`
+}
+
+// ListCurrentUserPlaylists returns one current-user playlist page without following provider pagination URLs.
+func (client Client) ListCurrentUserPlaylists(ctx context.Context, limit, offset int) (PlaylistPage, error) {
+	if limit < 1 || limit > 50 || offset < 0 {
+		return PlaylistPage{}, ErrInvalidResponse
+	}
+	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	var response playlistPageResponse
+	if err := client.requestJSON(ctx, http.MethodGet, "/me/playlists?"+values.Encode(), &response); err != nil {
+		return PlaylistPage{}, err
+	}
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(*response.Items) > limit {
+		return PlaylistPage{}, ErrInvalidResponse
+	}
+	for _, playlist := range *response.Items {
+		if !validPlaylist(playlist) {
+			return PlaylistPage{}, ErrInvalidResponse
+		}
+	}
+	return PlaylistPage{
+		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
+	}, nil
+}
+
+func validPlaylist(playlist Playlist) bool {
+	return spotifyref.ValidID(playlist.ID) && playlist.ItemCount != nil && playlist.ItemCount.Total >= 0
 }
 
 type trackPageResponse struct {

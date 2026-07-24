@@ -12,9 +12,10 @@ type Kind string
 
 // Supported catalog resource kinds.
 const (
-	Track  Kind = "track"
-	Album  Kind = "album"
-	Artist Kind = "artist"
+	Track    Kind = "track"
+	Album    Kind = "album"
+	Artist   Kind = "artist"
+	Playlist Kind = "playlist"
 )
 
 var errInvalid = errors.New("invalid Spotify catalog reference")

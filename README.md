@@ -45,8 +45,9 @@ OAuth token in the configured credential backend. Setup messages and the
 authorization URL go to stderr. `me` writes the authenticated identity and
 granted scopes to stdout.
 
-Authorization requests `user-library-modify`, `user-library-read`, and
-`user-read-private`. Replace older credentials with `sptfy init --overwrite`.
+Authorization requests `playlist-read-collaborative`, `playlist-read-private`,
+`user-library-modify`, `user-library-read`, and `user-read-private`. Replace
+older credentials with `sptfy init --overwrite`.
 
 For a prompt-free setup, supply `--non-interactive`. Use `--no-browser` to
 open the printed URL yourself, or `--auth-code-stdin` to paste the complete
@@ -117,6 +118,24 @@ Album-track pages support 1–50 results and expose no album or artwork columns.
 Artist-album pages support 1–10 results and can include album artwork metadata.
 Both default to 10 and write opaque continuation hints to stderr.
 
+## Playlists
+
+List the current user's playlists or get one playlist from a raw Spotify ID,
+matching URI, or canonical URL:
+
+```sh
+sptfy playlists list --max 10
+sptfy playlists get spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
+```
+
+Lists default to 10 and allow 1–50 results. Default fields are
+`ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE`.
+`--extended` adds `URI | URL | SNAPSHOT_ID | DESCRIPTION`, and
+`--include-artwork` adds Spotify-hosted artwork metadata. `--fields`, `--id`,
+text sanitization, detail identity headers, and opaque stderr continuation
+hints follow the resource-output rules above. Playlist items and mutations are
+not implemented.
+
 ## Saved tracks
 
 ```sh
@@ -170,14 +189,15 @@ an OS keychain. It is opt-in and is not part of ordinary CI:
 ```sh
 SPOTIFY_CLI_LIVE=1 \
 SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 \
+SPOTIFY_CLI_LIVE_PLAYLIST_ID=your_playlist_id \
 SPOTIFY_CLIENT_ID=your_client_id \
 make live-smoke
 ```
 
 The harness is interactive because Spotify authorization opens a browser. It
-exercises setup, identity, refresh, search/pagination shapes, catalog gets and
-relationship traversals, replacement, clear, and re-initialization without
-exporting the stored OAuth credential.
+exercises setup, identity, refresh, search/pagination shapes, catalog gets,
+relationship traversals, playlist list/get, replacement, clear, and
+re-initialization without exporting the stored OAuth credential.
 
 ## License
 

@@ -4,6 +4,8 @@ set -euo pipefail
 [[ ${SPOTIFY_CLI_LIVE:-} == 1 ]] || { printf '%s\n' 'set SPOTIFY_CLI_LIVE=1 to run the live smoke' >&2; exit 2; }
 [[ ${SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT:-} == 1 ]] || { printf '%s\n' 'set SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT=1 to acknowledge dedicated-account use' >&2; exit 2; }
 [[ -n ${SPOTIFY_CLIENT_ID:-} ]] || { printf '%s\n' 'SPOTIFY_CLIENT_ID is required' >&2; exit 2; }
+[[ -n ${SPOTIFY_CLI_LIVE_PLAYLIST_ID:-} ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ID is required' >&2; exit 2; }
+[[ $SPOTIFY_CLI_LIVE_PLAYLIST_ID =~ ^[A-Za-z0-9]{22}$ ]] || { printf '%s\n' 'SPOTIFY_CLI_LIVE_PLAYLIST_ID must be a 22-character Spotify ID' >&2; exit 2; }
 live_dry=${SPOTIFY_CLI_LIVE_DRY_RUN:-0}
 if [[ $live_dry != 1 ]]; then
   [[ -t 0 ]] || { printf '%s\n' 'the live smoke requires an interactive terminal' >&2; exit 2; }
@@ -83,7 +85,7 @@ fi
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID"
 me_out=$("$SPTFY" --backend file me)
 grep -q '^account_id' <<<"$me_out"
-grep -Fxq $'scopes\tuser-library-modify,user-library-read,user-read-private' <<<"$me_out"
+grep -Fxq $'scopes\tplaylist-read-collaborative,playlist-read-private,user-library-modify,user-library-read,user-read-private' <<<"$me_out"
 ordinary_out=$("$SPTFY" --backend file search track a --max 10)
 [[ $(wc -l <<<"$ordinary_out") -gt 1 ]] || { printf '%s\n' 'ordinary search returned no rows' >&2; exit 1; }
 live_nonce=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
@@ -113,6 +115,24 @@ artist_out=$("$SPTFY" --backend file search artist 'Björk' --max 1)
 "$SPTFY" --backend file search artist 'Björk' --id --max 1
 "$SPTFY" --backend file search artist 'Björk' --fields ARTIST,ARTWORK --max 1
 "$SPTFY" --backend file search artist 'Björk' --extended --max 1
+
+playlist_page_out="$SPOTIFY_CLI_LIVE_ROOT/playlist-page.out"
+playlist_page_err="$SPOTIFY_CLI_LIVE_ROOT/playlist-page.err"
+"$SPTFY" --backend file playlists list --max 1 >"$playlist_page_out" 2>"$playlist_page_err"
+[[ $(sed -n '1p' "$playlist_page_out") == 'ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE' ]] || { printf '%s\n' 'playlists returned an unexpected shape' >&2; exit 1; }
+[[ $(wc -l <"$playlist_page_out") -eq 2 ]] || { printf '%s\n' 'playlist list did not return exactly one row' >&2; exit 1; }
+playlist_token=$(sed -n 's/^More results available (next: \(.*\))$/\1/p' "$playlist_page_err")
+if [[ $live_dry == 1 && -z $playlist_token ]]; then
+  printf '%s\n' 'playlists did not return a continuation token' >&2
+  exit 1
+fi
+if [[ -n $playlist_token ]]; then
+  playlist_next=$("$SPTFY" --backend file playlists list --id --max 1 --next-page-token "$playlist_token")
+  [[ -n $playlist_next && $(wc -l <<<"$playlist_next") -eq 1 ]] || { printf '%s\n' 'playlist continuation returned an unexpected shape' >&2; exit 1; }
+fi
+playlist_fixture_ids=$("$SPTFY" --backend file playlists list --id --max 50)
+grep -Fxq "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" <<<"$playlist_fixture_ids" || { printf '%s\n' 'configured playlist fixture was not listed' >&2; exit 1; }
+[[ $("$SPTFY" --backend file playlists get "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id) == "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" ]] || { printf '%s\n' 'playlist get returned an unexpected ID' >&2; exit 1; }
 
 track_id=11dFghVXANMlKmJXsNCbNl
 album_id=4aawyAB9vmqN3uQ7FjRGTy

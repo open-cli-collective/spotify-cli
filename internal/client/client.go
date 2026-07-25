@@ -158,15 +158,6 @@ type Playlist struct {
 	SnapshotID    string             `json:"snapshot_id"`
 }
 
-// PlaylistPage is one validated current-user playlist page.
-type PlaylistPage struct {
-	Items   []Playlist
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
-}
-
 // PlaylistItem is one flattened mixed-media playlist entry.
 type PlaylistItem struct {
 	Type        string
@@ -187,23 +178,22 @@ type PlaylistItem struct {
 	Images      []Image
 }
 
-// PlaylistItemPage is one validated playlist-item page.
-type PlaylistItemPage struct {
-	Items   []PlaylistItem
+// Page is one validated Spotify API result page.
+type Page[T any] struct {
+	Items   []T
 	Offset  int
 	Limit   int
-	Total   int
 	HasNext bool
 }
 
+// PlaylistPage is one validated current-user playlist page.
+type PlaylistPage = Page[Playlist]
+
+// PlaylistItemPage is one validated playlist-item page.
+type PlaylistItemPage = Page[PlaylistItem]
+
 // TrackPage is one validated Spotify search page.
-type TrackPage struct {
-	Items   []Track
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
-}
+type TrackPage = Page[Track]
 
 // SavedTrack is one track and its library timestamp.
 type SavedTrack struct {
@@ -212,13 +202,7 @@ type SavedTrack struct {
 }
 
 // SavedTrackPage is one validated saved-track page.
-type SavedTrackPage struct {
-	Items   []SavedTrack
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
-}
+type SavedTrackPage = Page[SavedTrack]
 
 // SavedAlbum is one album and its library timestamp.
 type SavedAlbum struct {
@@ -227,30 +211,38 @@ type SavedAlbum struct {
 }
 
 // SavedAlbumPage is one validated saved-album page.
-type SavedAlbumPage struct {
-	Items   []SavedAlbum
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
-}
+type SavedAlbumPage = Page[SavedAlbum]
 
 // AlbumPage is one validated Spotify album-search page.
-type AlbumPage struct {
-	Items   []Album
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
-}
+type AlbumPage = Page[Album]
 
 // ArtistPage is one validated Spotify artist-search page.
-type ArtistPage struct {
-	Items   []Artist
-	Offset  int
-	Limit   int
-	Total   int
-	HasNext bool
+type ArtistPage = Page[Artist]
+
+type pageResponse[T any] struct {
+	Items  []T     `json:"items"`
+	Limit  int     `json:"limit"`
+	Next   *string `json:"next"`
+	Offset int     `json:"offset"`
+	Total  int     `json:"total"`
+}
+
+func (response pageResponse[T]) page(offset, limit int, validItem func(T) error) (Page[T], error) {
+	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
+		response.Total < 0 || len(response.Items) > limit {
+		return Page[T]{}, ErrInvalidResponse
+	}
+	if validItem != nil {
+		for _, item := range response.Items {
+			if err := validItem(item); err != nil {
+				return Page[T]{}, err
+			}
+		}
+	}
+	return Page[T]{
+		Items: response.Items, Offset: response.Offset, Limit: response.Limit,
+		HasNext: response.Next != nil && *response.Next != "",
+	}, nil
 }
 
 // Me returns the current Spotify user's stable identity.
@@ -325,37 +317,22 @@ func (client Client) GetPlaylist(ctx context.Context, id string) (Playlist, erro
 	return playlist, nil
 }
 
-type playlistPageResponse struct {
-	Items  *[]Playlist `json:"items"`
-	Limit  int         `json:"limit"`
-	Next   *string     `json:"next"`
-	Offset int         `json:"offset"`
-	Total  int         `json:"total"`
-}
-
 // ListCurrentUserPlaylists returns one current-user playlist page without following provider pagination URLs.
 func (client Client) ListCurrentUserPlaylists(ctx context.Context, limit, offset int) (PlaylistPage, error) {
 	if limit < 1 || limit > 50 || offset < 0 {
 		return PlaylistPage{}, ErrInvalidResponse
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var response playlistPageResponse
+	var response pageResponse[Playlist]
 	if err := client.getJSON(ctx, "/me/playlists?"+values.Encode(), &response); err != nil {
 		return PlaylistPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return PlaylistPage{}, ErrInvalidResponse
-	}
-	for _, playlist := range *response.Items {
+	return response.page(offset, limit, func(playlist Playlist) error {
 		if !validPlaylist(playlist) {
-			return PlaylistPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return PlaylistPage{
-		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
-	}, nil
+		return nil
+	})
 }
 
 func validPlaylist(playlist Playlist) bool {
@@ -371,14 +348,6 @@ type playlistItemWrapper struct {
 	Item    json.RawMessage `json:"item"`
 }
 
-type playlistItemPageResponse struct {
-	Items  *[]playlistItemWrapper `json:"items"`
-	Limit  int                    `json:"limit"`
-	Next   *string                `json:"next"`
-	Offset int                    `json:"offset"`
-	Total  int                    `json:"total"`
-}
-
 // ListPlaylistItems returns one playlist-item page without following provider pagination URLs.
 func (client Client) ListPlaylistItems(ctx context.Context, id string, limit, offset int) (PlaylistItemPage, error) {
 	if !spotifyref.ValidID(id) || limit < 1 || limit > 50 || offset < 0 {
@@ -389,33 +358,29 @@ func (client Client) ListPlaylistItems(ctx context.Context, id string, limit, of
 		"limit":            {strconv.Itoa(limit)},
 		"offset":           {strconv.Itoa(offset)},
 	}
-	var response playlistItemPageResponse
+	var response pageResponse[playlistItemWrapper]
 	if err := client.getJSON(ctx, "/playlists/"+id+"/items?"+values.Encode(), &response); err != nil {
 		return PlaylistItemPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return PlaylistItemPage{}, ErrInvalidResponse
+	page, err := response.page(offset, limit, nil)
+	if err != nil {
+		return PlaylistItemPage{}, err
 	}
-	itemCount := len(*response.Items)
-	hasNext := response.Next != nil && *response.Next != ""
+	itemCount := len(page.Items)
 	if itemCount > 0 && (itemCount > response.Total || response.Offset > response.Total-itemCount) ||
-		hasNext && itemCount != response.Limit ||
-		hasNext != (response.Offset < response.Total && itemCount < response.Total-response.Offset) {
+		page.HasNext && itemCount != response.Limit ||
+		page.HasNext != (response.Offset < response.Total && itemCount < response.Total-response.Offset) {
 		return PlaylistItemPage{}, ErrInvalidResponse
 	}
-	items := make([]PlaylistItem, len(*response.Items))
-	for index, wrapper := range *response.Items {
+	items := make([]PlaylistItem, len(page.Items))
+	for index, wrapper := range page.Items {
 		item, err := decodePlaylistItem(wrapper)
 		if err != nil {
 			return PlaylistItemPage{}, err
 		}
 		items[index] = item
 	}
-	return PlaylistItemPage{
-		Items: items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: hasNext,
-	}, nil
+	return PlaylistItemPage{Items: items, Offset: page.Offset, Limit: page.Limit, HasNext: page.HasNext}, nil
 }
 
 type playlistSnapshotResponse struct {
@@ -565,45 +530,22 @@ func decodePlaylistItem(wrapper playlistItemWrapper) (PlaylistItem, error) {
 	return item, nil
 }
 
-type trackPageResponse struct {
-	Items  *[]Track `json:"items"`
-	Limit  int      `json:"limit"`
-	Next   *string  `json:"next"`
-	Offset int      `json:"offset"`
-	Total  int      `json:"total"`
-}
-
 // ListAlbumTracks returns one album-track page without following provider pagination URLs.
 func (client Client) ListAlbumTracks(ctx context.Context, id string, limit, offset int) (TrackPage, error) {
 	if !spotifyref.ValidID(id) || limit < 1 || limit > 50 || offset < 0 {
 		return TrackPage{}, ErrInvalidResponse
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var response trackPageResponse
+	var response pageResponse[Track]
 	if err := client.getJSON(ctx, "/albums/"+id+"/tracks?"+values.Encode(), &response); err != nil {
 		return TrackPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return TrackPage{}, ErrInvalidResponse
-	}
-	for _, track := range *response.Items {
+	return response.page(offset, limit, func(track Track) error {
 		if strings.TrimSpace(track.ID) == "" {
-			return TrackPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return TrackPage{
-		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
-	}, nil
-}
-
-type albumPageResponse struct {
-	Items  *[]Album `json:"items"`
-	Limit  int      `json:"limit"`
-	Next   *string  `json:"next"`
-	Offset int      `json:"offset"`
-	Total  int      `json:"total"`
+		return nil
+	})
 }
 
 // ListArtistAlbums returns one artist-album page without following provider pagination URLs.
@@ -612,31 +554,16 @@ func (client Client) ListArtistAlbums(ctx context.Context, id string, limit, off
 		return AlbumPage{}, ErrInvalidResponse
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var response albumPageResponse
+	var response pageResponse[Album]
 	if err := client.getJSON(ctx, "/artists/"+id+"/albums?"+values.Encode(), &response); err != nil {
 		return AlbumPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return AlbumPage{}, ErrInvalidResponse
-	}
-	for _, album := range *response.Items {
+	return response.page(offset, limit, func(album Album) error {
 		if strings.TrimSpace(album.ID) == "" {
-			return AlbumPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return AlbumPage{
-		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
-	}, nil
-}
-
-type savedTrackPageResponse struct {
-	Items  *[]SavedTrack `json:"items"`
-	Limit  int           `json:"limit"`
-	Next   *string       `json:"next"`
-	Offset int           `json:"offset"`
-	Total  int           `json:"total"`
+		return nil
+	})
 }
 
 // ListSavedTracks returns one saved-track page without following provider pagination URLs.
@@ -645,34 +572,19 @@ func (client Client) ListSavedTracks(ctx context.Context, limit, offset int) (Sa
 		return SavedTrackPage{}, ErrInvalidResponse
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var response savedTrackPageResponse
+	var response pageResponse[SavedTrack]
 	if err := client.getJSON(ctx, "/me/tracks?"+values.Encode(), &response); err != nil {
 		return SavedTrackPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return SavedTrackPage{}, ErrInvalidResponse
-	}
-	for _, item := range *response.Items {
+	return response.page(offset, limit, func(item SavedTrack) error {
 		if !spotifyref.ValidID(item.Track.ID) {
-			return SavedTrackPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
 		if _, err := time.Parse(time.RFC3339, item.AddedAt); err != nil {
-			return SavedTrackPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return SavedTrackPage{
-		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
-	}, nil
-}
-
-type savedAlbumPageResponse struct {
-	Items  *[]SavedAlbum `json:"items"`
-	Limit  int           `json:"limit"`
-	Next   *string       `json:"next"`
-	Offset int           `json:"offset"`
-	Total  int           `json:"total"`
+		return nil
+	})
 }
 
 // ListSavedAlbums returns one saved-album page without following provider pagination URLs.
@@ -681,31 +593,24 @@ func (client Client) ListSavedAlbums(ctx context.Context, limit, offset int) (Sa
 		return SavedAlbumPage{}, ErrInvalidResponse
 	}
 	values := url.Values{"limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
-	var response savedAlbumPageResponse
+	var response pageResponse[SavedAlbum]
 	if err := client.getJSON(ctx, "/me/albums?"+values.Encode(), &response); err != nil {
 		return SavedAlbumPage{}, err
 	}
-	if response.Offset != offset || response.Limit != limit || response.Items == nil ||
-		response.Total < 0 || len(*response.Items) > limit {
-		return SavedAlbumPage{}, ErrInvalidResponse
-	}
-	for _, item := range *response.Items {
+	return response.page(offset, limit, func(item SavedAlbum) error {
 		if !spotifyref.ValidID(item.Album.ID) || len(item.Album.Artists) == 0 {
-			return SavedAlbumPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
 		for _, artist := range item.Album.Artists {
 			if !spotifyref.ValidID(artist.ID) {
-				return SavedAlbumPage{}, ErrInvalidResponse
+				return ErrInvalidResponse
 			}
 		}
 		if _, err := time.Parse(time.RFC3339, item.AddedAt); err != nil {
-			return SavedAlbumPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return SavedAlbumPage{
-		Items: *response.Items, Offset: response.Offset, Limit: response.Limit,
-		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
-	}, nil
+		return nil
+	})
 }
 
 // CheckSavedTracks reports saved membership in input order.
@@ -786,94 +691,57 @@ func validLibraryURIs(kind spotifyref.Kind, uris []string) bool {
 }
 
 type trackSearchResponse struct {
-	Tracks *struct {
-		Items  *[]Track `json:"items"`
-		Limit  int      `json:"limit"`
-		Next   *string  `json:"next"`
-		Offset int      `json:"offset"`
-		Total  int      `json:"total"`
-	} `json:"tracks"`
+	Tracks pageResponse[Track] `json:"tracks"`
 }
 
 // SearchTracks returns one track-search page without following provider pagination URLs.
 func (client Client) SearchTracks(ctx context.Context, query string, limit, offset int) (TrackPage, error) {
-	values := url.Values{"q": {query}, "type": {"track"}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response trackSearchResponse
-	if err := client.getJSON(ctx, "/search?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, searchPath("track", query, limit, offset), &response); err != nil {
 		return TrackPage{}, err
 	}
-	if response.Tracks == nil || response.Tracks.Offset != offset || response.Tracks.Limit != limit ||
-		response.Tracks.Items == nil || response.Tracks.Total < 0 || len(*response.Tracks.Items) > limit {
-		return TrackPage{}, ErrInvalidResponse
-	}
-	return TrackPage{
-		Items: *response.Tracks.Items, Offset: response.Tracks.Offset, Limit: response.Tracks.Limit,
-		Total: response.Tracks.Total, HasNext: response.Tracks.Next != nil && *response.Tracks.Next != "",
-	}, nil
+	return response.Tracks.page(offset, limit, nil)
 }
 
 type albumSearchResponse struct {
-	Albums *struct {
-		Items  *[]Album `json:"items"`
-		Limit  int      `json:"limit"`
-		Next   *string  `json:"next"`
-		Offset int      `json:"offset"`
-		Total  int      `json:"total"`
-	} `json:"albums"`
+	Albums pageResponse[Album] `json:"albums"`
 }
 
 // SearchAlbums returns one album-search page without following provider pagination URLs.
 func (client Client) SearchAlbums(ctx context.Context, query string, limit, offset int) (AlbumPage, error) {
-	values := url.Values{"q": {query}, "type": {"album"}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response albumSearchResponse
-	if err := client.getJSON(ctx, "/search?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, searchPath("album", query, limit, offset), &response); err != nil {
 		return AlbumPage{}, err
 	}
-	if response.Albums == nil || response.Albums.Offset != offset || response.Albums.Limit != limit ||
-		response.Albums.Items == nil || response.Albums.Total < 0 || len(*response.Albums.Items) > limit {
-		return AlbumPage{}, ErrInvalidResponse
-	}
-	for _, album := range *response.Albums.Items {
+	return response.Albums.page(offset, limit, func(album Album) error {
 		if strings.TrimSpace(album.ID) == "" {
-			return AlbumPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return AlbumPage{
-		Items: *response.Albums.Items, Offset: response.Albums.Offset, Limit: response.Albums.Limit,
-		Total: response.Albums.Total, HasNext: response.Albums.Next != nil && *response.Albums.Next != "",
-	}, nil
+		return nil
+	})
 }
 
 type artistSearchResponse struct {
-	Artists *struct {
-		Items  *[]Artist `json:"items"`
-		Limit  int       `json:"limit"`
-		Next   *string   `json:"next"`
-		Offset int       `json:"offset"`
-		Total  int       `json:"total"`
-	} `json:"artists"`
+	Artists pageResponse[Artist] `json:"artists"`
 }
 
 // SearchArtists returns one artist-search page without following provider pagination URLs.
 func (client Client) SearchArtists(ctx context.Context, query string, limit, offset int) (ArtistPage, error) {
-	values := url.Values{"q": {query}, "type": {"artist"}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
 	var response artistSearchResponse
-	if err := client.getJSON(ctx, "/search?"+values.Encode(), &response); err != nil {
+	if err := client.getJSON(ctx, searchPath("artist", query, limit, offset), &response); err != nil {
 		return ArtistPage{}, err
 	}
-	if response.Artists == nil || response.Artists.Offset != offset || response.Artists.Limit != limit ||
-		response.Artists.Items == nil || response.Artists.Total < 0 || len(*response.Artists.Items) > limit {
-		return ArtistPage{}, ErrInvalidResponse
-	}
-	for _, artist := range *response.Artists.Items {
+	return response.Artists.page(offset, limit, func(artist Artist) error {
 		if strings.TrimSpace(artist.ID) == "" {
-			return ArtistPage{}, ErrInvalidResponse
+			return ErrInvalidResponse
 		}
-	}
-	return ArtistPage{
-		Items: *response.Artists.Items, Offset: response.Artists.Offset, Limit: response.Artists.Limit,
-		Total: response.Artists.Total, HasNext: response.Artists.Next != nil && *response.Artists.Next != "",
-	}, nil
+		return nil
+	})
+}
+
+func searchPath(kind, query string, limit, offset int) string {
+	values := url.Values{"q": {query}, "type": {kind}, "limit": {strconv.Itoa(limit)}, "offset": {strconv.Itoa(offset)}}
+	return "/search?" + values.Encode()
 }
 
 func (client Client) getJSON(ctx context.Context, path string, target any) error {

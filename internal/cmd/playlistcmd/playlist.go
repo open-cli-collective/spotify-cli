@@ -491,7 +491,7 @@ func readPlaylistItems(ctx context.Context, spotify playlistItemReader, playlist
 		if err != nil {
 			return nil, err
 		}
-		if page.Total != total || page.Offset != offset || len(page.Items) == 0 {
+		if page.Offset != offset || len(page.Items) == 0 || page.HasNext != (offset+len(page.Items) < total) {
 			return nil, client.ErrInvalidResponse
 		}
 		items = append(items, page.Items...)

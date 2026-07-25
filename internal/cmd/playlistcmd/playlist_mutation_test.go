@@ -278,7 +278,7 @@ func TestPlaylistItemsRemoveUncertainOutcomeRequiresReconciliation(t *testing.T)
 	}
 	session := &mutationSession{
 		scopes: mutationScopes(), gets: []client.Playlist{playlistState(1, "before\nsnapshot"), playlistState(1, "before\nsnapshot")},
-		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 1}}, mutationErr: uncertainCause,
+		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}}}, mutationErr: uncertainCause,
 	}
 	var stdout bytes.Buffer
 	stderr, err := executeMutationAtBoundary(Dependencies{OpenRemoveSession: func(context.Context, string, bool) (RemoveSession, error) {
@@ -320,7 +320,7 @@ func TestPlaylistItemsRemoveOutputFailurePreservesAppliedOutcome(t *testing.T) {
 	writer := &prefixFailingWriter{limit: 8, err: writerFailure}
 	session := &mutationSession{
 		scopes: mutationScopes(), gets: []client.Playlist{playlistState(1, "before"), playlistState(1, "before")},
-		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 1}},
+		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}}},
 	}
 	stderr, err := executeMutationAtBoundary(Dependencies{OpenRemoveSession: func(context.Context, string, bool) (RemoveSession, error) {
 		return session, nil
@@ -383,7 +383,7 @@ func TestPlaylistItemsRemoveUniquePositionAndInverseRecord(t *testing.T) {
 	items := []client.PlaylistItem{trackItem(trackID1), trackItem(trackID2), trackItem(trackID3)}
 	session := &mutationSession{
 		scopes: mutationScopes(), gets: []client.Playlist{playlistState(3, "before"), playlistState(3, "before")},
-		pages: map[int]client.PlaylistItemPage{0: {Items: items, Total: 3}},
+		pages: map[int]client.PlaylistItemPage{0: {Items: items}},
 	}
 	stdout, stderr, opens, err := executeRemove(session, "playlists", "items", "remove", playlistID, "1")
 	want := "removed\t" + playlistID + "\t1\t" + trackID2 + "\tfinal-snapshot\n"
@@ -409,16 +409,16 @@ func TestPlaylistItemsRemoveRejectsUnsafeTargetsBeforeDelete(t *testing.T) {
 		pages    map[int]client.PlaylistItemPage
 	}{
 		{name: "out of range", position: "3", gets: []client.Playlist{playlistState(3, "before")}},
-		{name: "episode", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "episode", ID: trackID1, URI: "spotify:episode:" + trackID1}}, Total: 1}}},
-		{name: "local", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "local"}}, Total: 1}}},
-		{name: "unavailable", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "unavailable"}}, Total: 1}}},
-		{name: "future", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "audiobook", ID: trackID1, URI: "spotify:track:" + trackID1}}, Total: 1}}},
-		{name: "duplicate", position: "0", gets: []client.Playlist{playlistState(51, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: duplicateItems[:50], Total: 51}, 50: {Items: duplicateItems[50:], Total: 51}}},
-		{name: "duplicate missing uri", position: "0", gets: []client.Playlist{playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1), {Type: "track", ID: trackID1}}, Total: 2}}},
-		{name: "duplicate mismatched uri", position: "0", gets: []client.Playlist{playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1), {Type: "track", ID: trackID1, URI: "spotify:track:" + trackID2}}, Total: 2}}},
-		{name: "stale snapshot", position: "0", gets: []client.Playlist{playlistState(1, "before"), playlistState(1, "changed")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 1}}},
-		{name: "stale count", position: "0", gets: []client.Playlist{playlistState(1, "before"), playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 1}}},
-		{name: "page total mismatch", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 2}}},
+		{name: "episode", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "episode", ID: trackID1, URI: "spotify:episode:" + trackID1}}}}},
+		{name: "local", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "local"}}}}},
+		{name: "unavailable", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "unavailable"}}}}},
+		{name: "future", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{{Type: "audiobook", ID: trackID1, URI: "spotify:track:" + trackID1}}}}},
+		{name: "duplicate", position: "0", gets: []client.Playlist{playlistState(51, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: duplicateItems[:50], HasNext: true}, 50: {Items: duplicateItems[50:]}}},
+		{name: "duplicate missing uri", position: "0", gets: []client.Playlist{playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1), {Type: "track", ID: trackID1}}}}},
+		{name: "duplicate mismatched uri", position: "0", gets: []client.Playlist{playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1), {Type: "track", ID: trackID1, URI: "spotify:track:" + trackID2}}}}},
+		{name: "stale snapshot", position: "0", gets: []client.Playlist{playlistState(1, "before"), playlistState(1, "changed")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}}}},
+		{name: "stale count", position: "0", gets: []client.Playlist{playlistState(1, "before"), playlistState(2, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}}}},
+		{name: "page total mismatch", position: "0", gets: []client.Playlist{playlistState(1, "before")}, pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, HasNext: true}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := &mutationSession{scopes: mutationScopes(), gets: test.gets, pages: test.pages}
@@ -466,7 +466,7 @@ func TestPlaylistMutationScopeGuardRequiresAllFourScopes(t *testing.T) {
 func TestPlaylistRemoveMutationFailureEmitsNothing(t *testing.T) {
 	session := &mutationSession{
 		scopes: mutationScopes(), gets: []client.Playlist{playlistState(1, "before"), playlistState(1, "before")},
-		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}, Total: 1}}, mutationErr: errors.New("failure"),
+		pages: map[int]client.PlaylistItemPage{0: {Items: []client.PlaylistItem{trackItem(trackID1)}}}, mutationErr: errors.New("failure"),
 	}
 	stdout, stderr, _, err := executeRemove(session, "playlists", "items", "remove", playlistID, "0")
 	if exitcode.Code(err) != exitcode.Upstream || stdout != "" || stderr != "" || len(session.removeCalls) != 1 {

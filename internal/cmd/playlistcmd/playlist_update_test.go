@@ -88,7 +88,7 @@ func (session *updateSession) ListPlaylistItems(_ context.Context, playlistID st
 		session.items[len(session.items)-1].Name = "changed display metadata"
 	}
 	end := min(offset+limit, len(session.items))
-	return client.PlaylistItemPage{Items: append([]client.PlaylistItem(nil), session.items[offset:end]...), Offset: offset, Limit: limit, Total: len(session.items)}, nil
+	return client.PlaylistItemPage{Items: append([]client.PlaylistItem(nil), session.items[offset:end]...), Offset: offset, Limit: limit, HasNext: end < len(session.items)}, nil
 }
 func (session *updateSession) AddPlaylistItems(_ context.Context, playlistID string, uris []string, position *int) (string, error) {
 	session.resourceIDs = append(session.resourceIDs, "add:"+playlistID)

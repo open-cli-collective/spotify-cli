@@ -61,7 +61,7 @@ func (session *fakeSession) ListAlbumTracks(_ context.Context, id string, limit,
 			ExternalURLs: client.ExternalURLs{Spotify: "https://open.spotify.com/track/track-1"},
 			DiscNumber:   2, TrackNumber: 3, Explicit: true, Restrictions: client.Restriction{Reason: "market"},
 		}},
-		Limit: limit, Offset: offset, Total: offset + 1, HasNext: session.hasNext,
+		Limit: limit, Offset: offset, HasNext: session.hasNext,
 	}, nil
 }
 func (session *fakeSession) ListArtistAlbums(_ context.Context, id string, limit, offset int) (client.AlbumPage, error) {
@@ -79,7 +79,7 @@ func (session *fakeSession) ListArtistAlbums(_ context.Context, id string, limit
 			ReleaseDate: "2026", TotalTracks: 10, URI: "spotify:album:album-1",
 			Images: []client.Image{{URL: "https://album-image"}},
 		}},
-		Limit: limit, Offset: offset, Total: offset + 1, HasNext: session.hasNext,
+		Limit: limit, Offset: offset, HasNext: session.hasNext,
 	}, nil
 }
 

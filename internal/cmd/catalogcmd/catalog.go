@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 
 	"github.com/spf13/cobra"
 
@@ -105,9 +104,11 @@ func newTrack(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderTrack(track, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderTrackIDs([]client.Track{track})
+		} else {
+			rendered = output.RenderTrack(track, fields)
 		}
 		return writeOutput(command, rendered)
 	})
@@ -137,9 +138,11 @@ func newAlbum(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderAlbum(album, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderAlbumIDs([]client.Album{album})
+		} else {
+			rendered = output.RenderAlbum(album, fields)
 		}
 		return writeOutput(command, rendered)
 	})
@@ -168,9 +171,11 @@ func newArtist(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderArtist(artist, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderArtistIDs([]client.Artist{artist})
+		} else {
+			rendered = output.RenderArtist(artist, fields)
 		}
 		return writeOutput(command, rendered)
 	})
@@ -194,7 +199,7 @@ func newAlbumTracks(deps Dependencies) *cobra.Command {
 			}
 		}
 		scope := "album-tracks:" + id
-		offset, err := decodeTraversalToken(scope, opts.nextPageToken, 50)
+		offset, err := decodeTraversalToken(scope, opts.nextPageToken)
 		if err != nil {
 			return err
 		}
@@ -207,11 +212,11 @@ func newAlbumTracks(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderTracks(page.Items, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderTrackIDs(page.Items)
 		} else {
-			rendered = "Album ID: " + id + "\n" + rendered
+			rendered = "Album ID: " + id + "\n" + output.RenderTracks(page.Items, fields)
 		}
 		return writeListOutput(command, rendered, scope, page.Offset, page.Limit, page.HasNext)
 	})
@@ -235,7 +240,7 @@ func newArtistAlbums(deps Dependencies) *cobra.Command {
 			}
 		}
 		scope := "artist-albums:" + id
-		offset, err := decodeTraversalToken(scope, opts.nextPageToken, 10)
+		offset, err := decodeTraversalToken(scope, opts.nextPageToken)
 		if err != nil {
 			return err
 		}
@@ -248,11 +253,11 @@ func newArtistAlbums(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderAlbums(page.Items, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderAlbumIDs(page.Items)
 		} else {
-			rendered = "Artist ID: " + id + "\n" + rendered
+			rendered = "Artist ID: " + id + "\n" + output.RenderAlbums(page.Items, fields)
 		}
 		return writeListOutput(command, rendered, scope, page.Offset, page.Limit, page.HasNext)
 	})
@@ -276,8 +281,8 @@ func listCommand(parent, resource string, maxResults int, artwork bool, opts *li
 	return command
 }
 
-func decodeTraversalToken(scope, value string, pageLimit int) (int, error) {
-	offset, err := pagetoken.Decode(scope, value, math.MaxInt-pageLimit)
+func decodeTraversalToken(scope, value string) (int, error) {
+	offset, err := pagetoken.Decode(scope, value)
 	if err != nil {
 		return 0, exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 	}

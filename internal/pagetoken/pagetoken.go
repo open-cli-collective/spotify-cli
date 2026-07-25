@@ -17,8 +17,8 @@ func Encode(scope string, offset int) string {
 	return base64.RawURLEncoding.EncodeToString([]byte("v1:" + scope + ":" + strconv.Itoa(offset)))
 }
 
-// Decode validates a token for one command scope and offset ceiling.
-func Decode(scope, value string, maxOffset int) (int, error) {
+// Decode validates a token for one command scope.
+func Decode(scope, value string) (int, error) {
 	if value == "" {
 		return 0, nil
 	}
@@ -31,7 +31,7 @@ func Decode(scope, value string, maxOffset int) (int, error) {
 		return 0, errInvalid
 	}
 	offset, err := strconv.Atoi(strings.TrimPrefix(string(decoded), prefix))
-	if err != nil || offset < 0 || offset > maxOffset {
+	if err != nil || offset < 0 {
 		return 0, errInvalid
 	}
 	return offset, nil

@@ -45,12 +45,10 @@ type Dependencies struct {
 	OpenSetCredentialStore setcredential.StoreOpener
 	Now                    func() time.Time
 	Interactive            bool
-	Prompt                 func(*initcmd.Setup) error
 	OpenBrowser            func(string) error
 	HTTPClient             *http.Client
 	OAuthEndpoints         auth.Endpoints
 	APIBaseURL             string
-	SaveConfig             func(config.Config) error
 }
 
 // New constructs the top-level command from its runtime effects.
@@ -89,12 +87,8 @@ func New(deps Dependencies) *cobra.Command {
 	authorizer := auth.Authorizer{
 		HTTPClient: deps.HTTPClient, Endpoints: deps.OAuthEndpoints, OpenBrowser: deps.OpenBrowser,
 	}
-	saveConfig := deps.SaveConfig
-	if saveConfig == nil {
-		saveConfig = func(value config.Config) error { return config.Save(deps.Scope, value) }
-	}
 	cmd.AddCommand(initcmd.New(initcmd.Dependencies{
-		Scope: deps.Scope, Interactive: deps.Interactive, Prompt: deps.Prompt,
+		Scope: deps.Scope, Interactive: deps.Interactive,
 		Initializer: initcmd.Initializer{
 			OpenStore: deps.OpenInitStore, Now: deps.Now, Authorize: authorizer.Authorize,
 			Verify: func(ctx context.Context, _ config.Config, envelope token.Envelope) (client.User, error) {
@@ -108,7 +102,7 @@ func New(deps Dependencies) *cobra.Command {
 				}))
 				return (client.Client{HTTPClient: httpClient, BaseURL: deps.APIBaseURL}).Me(ctx)
 			},
-			SaveConfig: saveConfig,
+			SaveConfig: func(value config.Config) error { return config.Save(deps.Scope, value) },
 		},
 	}))
 	sessionOpener := session.Opener{

@@ -12,7 +12,7 @@ func TestRoundTripAndStableEncoding(t *testing.T) {
 	if token != base64.RawURLEncoding.EncodeToString([]byte("v1:"+scope+":50")) {
 		t.Fatalf("token=%q", token)
 	}
-	offset, err := Decode(scope, token, 1000)
+	offset, err := Decode(scope, token)
 	if err != nil || offset != 50 {
 		t.Fatalf("offset=%d error=%v", offset, err)
 	}
@@ -28,17 +28,16 @@ func TestDecodeRejectsInvalidTokens(t *testing.T) {
 		encoded("v1:album:1"),
 		encoded("v1:track:-1"),
 		encoded("v1:track:not-a-number"),
-		encoded("v1:track:1001"),
 		strings.Repeat("a", maxEncodedLength+1),
 	} {
-		if _, err := Decode("track", token, 1000); err == nil {
+		if _, err := Decode("track", token); err == nil {
 			t.Fatalf("token %q accepted", token)
 		}
 	}
 }
 
 func TestDecodeEmptyTokenStartsAtZero(t *testing.T) {
-	offset, err := Decode("track", "", 1000)
+	offset, err := Decode("track", "")
 	if err != nil || offset != 0 {
 		t.Fatalf("offset=%d error=%v", offset, err)
 	}

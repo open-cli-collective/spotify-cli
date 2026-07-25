@@ -116,6 +116,39 @@ func TestSearchArgumentMessages(t *testing.T) {
 	}
 }
 
+func TestSearchFactoryDerivesNounSpecificText(t *testing.T) {
+	command := New(Dependencies{})
+	for _, test := range []struct {
+		noun, use, short, idUsage, extendedUsage, fieldError string
+	}{
+		{
+			noun: "track", use: "track <query>", short: "Search tracks (at most 10 results per page)",
+			idUsage: "Emit only track IDs", extendedUsage: "Add less-frequent track columns",
+			fieldError: `unknown track field "nope"; valid fields: ID, TRACK, ARTIST_IDS, ARTISTS, ALBUM_ID, ALBUM, DURATION, URI, URL, DISC_NUMBER, TRACK_NUMBER, EXPLICIT, RESTRICTION, ARTWORK`,
+		},
+		{
+			noun: "album", use: "album <query>", short: "Search albums (at most 10 results per page)",
+			idUsage: "Emit only album IDs", extendedUsage: "Add less-frequent album columns",
+			fieldError: `unknown album field "nope"; valid fields: ID, ALBUM, ARTIST_IDS, ARTISTS, RELEASE_DATE, TOTAL_TRACKS, URI, URL, ALBUM_TYPE, RELEASE_DATE_PRECISION, RESTRICTION, ARTWORK`,
+		},
+		{
+			noun: "artist", use: "artist <query>", short: "Search artists (at most 10 results per page)",
+			idUsage: "Emit only artist IDs", extendedUsage: "Add less-frequent artist columns",
+			fieldError: `unknown artist field "nope"; valid fields: ID, ARTIST, URI, URL, ARTWORK`,
+		},
+	} {
+		subcommand, _, err := command.Find([]string{test.noun})
+		if err != nil || subcommand.Use != test.use || subcommand.Short != test.short ||
+			subcommand.Flags().Lookup("id").Usage != test.idUsage || subcommand.Flags().Lookup("extended").Usage != test.extendedUsage {
+			t.Fatalf("noun=%s command=%+v error=%v", test.noun, subcommand, err)
+		}
+		_, _, opens, err := executeSearch("", test.noun, "q", "--fields", "nope")
+		if err == nil || err.Error() != test.fieldError || opens != 0 {
+			t.Fatalf("noun=%s error=%v opens=%d", test.noun, err, opens)
+		}
+	}
+}
+
 func TestTrackSearchClassifiesAPIFailuresWithoutLeakingBodies(t *testing.T) {
 	for _, test := range []struct {
 		status int

@@ -12,14 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/open-cli-collective/spotify-cli/internal/cmd/configcmd"
-	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/root"
-	"github.com/open-cli-collective/spotify-cli/internal/cmd/setcredential"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
-	"github.com/open-cli-collective/spotify-cli/internal/session"
 )
 
 func main() {
@@ -29,26 +25,14 @@ func main() {
 }
 
 func run() int {
-	openStore := credentials.ProductionOpener(promptFilePassphrase)
 	cmd := root.New(root.Dependencies{
-		In:     os.Stdin,
-		Out:    os.Stdout,
-		ErrOut: os.Stderr,
-		Scope:  statedir.Scope{Name: config.Service},
-		Cache:  statedir.Cache{Tool: config.Tool},
-		Data:   statedir.Data{Tool: config.Tool},
-		OpenConfigStore: func(request credentials.OpenRequest) (configcmd.CredentialStore, error) {
-			return openStore(request)
-		},
-		OpenInitStore: func(request credentials.OpenRequest) (initcmd.CredentialStore, error) {
-			return openStore(request)
-		},
-		OpenSessionStore: func(request credentials.OpenRequest) (session.CredentialStore, error) {
-			return openStore(request)
-		},
-		OpenSetCredentialStore: func(request credentials.OpenRequest) (setcredential.CredentialStore, error) {
-			return openStore(request)
-		},
+		In:          os.Stdin,
+		Out:         os.Stdout,
+		ErrOut:      os.Stderr,
+		Scope:       statedir.Scope{Name: config.Service},
+		Cache:       statedir.Cache{Tool: config.Tool},
+		Data:        statedir.Data{Tool: config.Tool},
+		OpenStore:   credentials.ProductionOpener(promptFilePassphrase),
 		Interactive: term.IsTerminal(int(os.Stdin.Fd())),
 		OpenBrowser: browser.OpenURL,
 		HTTPClient:  spotifyHTTPClient(),

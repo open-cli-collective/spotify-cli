@@ -381,7 +381,7 @@ func (client Client) ListPlaylistItems(ctx context.Context, id string, limit, of
 		}
 		items[index] = item
 	}
-	return PlaylistItemPage{Items: items, Offset: page.Offset, Limit: page.Limit, HasNext: page.HasNext}, nil
+	return PlaylistItemPage{Items: items, Offset: page.Offset, Limit: page.Limit, Total: page.Total, HasNext: page.HasNext}, nil
 }
 
 type playlistSnapshotResponse struct {

@@ -34,7 +34,7 @@ func TestListPlaylistItemsUsesCurrentFixedPathAndDecodesMixedItems(t *testing.T)
 		],"limit":6,"offset":20,"total":27,"next":"https://evil.invalid/follow"}`), nil
 	})}
 	page, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).ListPlaylistItems(context.Background(), playlistID, 6, 20)
-	if err != nil || calls != 1 || len(page.Items) != 6 || page.Offset != 20 || !page.HasNext {
+	if err != nil || calls != 1 || len(page.Items) != 6 || page.Offset != 20 || page.Total != 27 || !page.HasNext {
 		t.Fatalf("page=%+v calls=%d error=%v", page, calls, err)
 	}
 	track, episode, local, unavailable, unknown, untyped := page.Items[0], page.Items[1], page.Items[2], page.Items[3], page.Items[4], page.Items[5]

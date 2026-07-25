@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,54 @@ func TestAuthenticatedCommandsAreWired(t *testing.T) {
 				t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
 			}
 		})
+	}
+}
+
+func TestPlaylistAddUsesRealSessionWiring(t *testing.T) {
+	const (
+		playlistID = "0123456789ABCDEFGHIJKL"
+		trackID    = "abcdefghijklmnopqrstuv"
+	)
+	h := newHarness(t)
+	saveClientID(t, h.deps.Scope)
+	now := h.deps.Now()
+	encoded, err := token.Encode(token.Envelope{
+		AccessToken: "access", TokenType: "Bearer", RefreshToken: "refresh", ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Scopes: []string{
+			auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic,
+			auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate,
+		},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.store.Values["default/oauth_token"] = string(encoded)
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		paths = append(paths, request.URL.Path)
+		if request.Header.Get("Authorization") != "Bearer access" {
+			t.Fatalf("authorization=%q", request.Header.Get("Authorization"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/playlists/"+playlistID:
+			_, _ = io.WriteString(writer, `{"id":"`+playlistID+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":false,"collaborative":false,"snapshot_id":"before"}`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/playlists/"+playlistID+"/items":
+			_, _ = io.WriteString(writer, `{"snapshot_id":"after-add"}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	h.deps.HTTPClient = server.Client()
+	h.deps.APIBaseURL = server.URL + "/v1"
+
+	if err := h.execute("playlists", "items", "add", playlistID, trackID, "--position", "1"); err != nil {
+		t.Fatalf("error=%v paths=%v", err, paths)
+	}
+	if h.out.String() != "added\t"+playlistID+"\t1\t1\tafter-add\n" || h.errOut.Len() != 0 ||
+		!slices.Equal(paths, []string{"/v1/playlists/" + playlistID, "/v1/playlists/" + playlistID + "/items"}) {
+		t.Fatalf("stdout=%q stderr=%q paths=%v", h.out.String(), h.errOut.String(), paths)
 	}
 }
 

@@ -262,7 +262,7 @@ func livePlaylistState(ctx context.Context, authenticated *session.Session, play
 	ids := make([]string, 0, total)
 	for offset := 0; offset < total; {
 		page, err := authenticated.ListPlaylistItems(ctx, playlistID, 50, offset)
-		if err != nil || page.Offset != offset || len(page.Items) == 0 || page.HasNext != (offset+len(page.Items) < total) {
+		if err != nil || page.Total != total || page.Offset != offset || len(page.Items) == 0 {
 			return nil, "", errors.New("reading playlist items failed")
 		}
 		for _, item := range page.Items {

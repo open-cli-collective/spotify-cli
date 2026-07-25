@@ -183,6 +183,7 @@ type Page[T any] struct {
 	Items   []T
 	Offset  int
 	Limit   int
+	Total   int
 	HasNext bool
 }
 
@@ -241,7 +242,7 @@ func (response pageResponse[T]) page(offset, limit int, validItem func(T) error)
 	}
 	return Page[T]{
 		Items: response.Items, Offset: response.Offset, Limit: response.Limit,
-		HasNext: response.Next != nil && *response.Next != "",
+		Total: response.Total, HasNext: response.Next != nil && *response.Next != "",
 	}, nil
 }
 

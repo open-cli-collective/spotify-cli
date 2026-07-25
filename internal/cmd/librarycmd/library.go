@@ -30,13 +30,10 @@ type Session interface {
 	Close() error
 	Scopes() []string
 	ListSavedTracks(context.Context, int, int) (client.SavedTrackPage, error)
-	CheckSavedTracks(context.Context, []string) ([]bool, error)
-	SaveSavedTracks(context.Context, []string) error
-	RemoveSavedTracks(context.Context, []string) error
 	ListSavedAlbums(context.Context, int, int) (client.SavedAlbumPage, error)
-	CheckSavedAlbums(context.Context, []string) ([]bool, error)
-	SaveSavedAlbums(context.Context, []string) error
-	RemoveSavedAlbums(context.Context, []string) error
+	CheckSavedItems(context.Context, spotifyref.Kind, []string) ([]bool, error)
+	SaveSavedItems(context.Context, spotifyref.Kind, []string) error
+	RemoveSavedItems(context.Context, spotifyref.Kind, []string) error
 }
 
 // SessionOpener opens the authenticated capability required by library commands.
@@ -59,7 +56,6 @@ type listOptions struct {
 type libraryReference struct {
 	reference string
 	id        string
-	uri       string
 }
 
 // New constructs the saved library command tree.
@@ -189,7 +185,7 @@ func newCheck(deps Dependencies, kind spotifyref.Kind) *cobra.Command {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
-			saved, err := checkSaved(command.Context(), authenticated, kind, libraryURIs(references))
+			saved, err := authenticated.CheckSavedItems(command.Context(), kind, referenceIDs(references))
 			if err != nil {
 				return exitcode.New(cmdutil.Classify(err), err)
 			}
@@ -223,11 +219,11 @@ func newMutation(deps Dependencies, kind spotifyref.Kind, verb string) *cobra.Co
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
-			uris := libraryURIs(references)
+			ids := referenceIDs(references)
 			if verb == "add" {
-				err = saveItems(command.Context(), authenticated, kind, uris)
+				err = authenticated.SaveSavedItems(command.Context(), kind, ids)
 			} else {
-				err = removeItems(command.Context(), authenticated, kind, uris)
+				err = authenticated.RemoveSavedItems(command.Context(), kind, ids)
 			}
 			if err != nil {
 				return exitcode.New(cmdutil.Classify(err), err)
@@ -256,17 +252,17 @@ func parseReferences(args []string, kind spotifyref.Kind) ([]libraryReference, e
 			continue
 		}
 		seen[id] = struct{}{}
-		result = append(result, libraryReference{reference: reference, id: id, uri: "spotify:" + string(kind) + ":" + id})
+		result = append(result, libraryReference{reference: reference, id: id})
 	}
 	return result, nil
 }
 
-func libraryURIs(references []libraryReference) []string {
-	uris := make([]string, len(references))
+func referenceIDs(references []libraryReference) []string {
+	ids := make([]string, len(references))
 	for index, reference := range references {
-		uris[index] = reference.uri
+		ids[index] = reference.id
 	}
-	return uris
+	return ids
 }
 
 func resourcePlural(kind spotifyref.Kind) string {
@@ -274,27 +270,6 @@ func resourcePlural(kind spotifyref.Kind) string {
 		return "albums"
 	}
 	return "tracks"
-}
-
-func checkSaved(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) ([]bool, error) {
-	if kind == spotifyref.Album {
-		return session.CheckSavedAlbums(ctx, uris)
-	}
-	return session.CheckSavedTracks(ctx, uris)
-}
-
-func saveItems(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) error {
-	if kind == spotifyref.Album {
-		return session.SaveSavedAlbums(ctx, uris)
-	}
-	return session.SaveSavedTracks(ctx, uris)
-}
-
-func removeItems(ctx context.Context, session Session, kind spotifyref.Kind, uris []string) error {
-	if kind == spotifyref.Album {
-		return session.RemoveSavedAlbums(ctx, uris)
-	}
-	return session.RemoveSavedTracks(ctx, uris)
 }
 
 func openSession(command *cobra.Command, deps Dependencies, requiredScope string) (Session, error) {

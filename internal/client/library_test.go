@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/open-cli-collective/spotify-cli/internal/spotifyref"
 )
 
 func TestSavedTrackListUsesFixedPathAndValidatesPage(t *testing.T) {
@@ -58,9 +60,9 @@ func TestSavedTrackMutationsChunkAtForty(t *testing.T) {
 				spotify := Client{HTTPClient: httpClient}
 				var err error
 				if method == http.MethodPut {
-					err = spotify.SaveSavedTracks(context.Background(), libraryURIs(count))
+					err = spotify.SaveSavedItems(context.Background(), spotifyref.Track, libraryIDs(count))
 				} else {
-					err = spotify.RemoveSavedTracks(context.Background(), libraryURIs(count))
+					err = spotify.RemoveSavedItems(context.Background(), spotifyref.Track, libraryIDs(count))
 				}
 				if err != nil || len(sizes) != (count+39)/40 {
 					t.Fatalf("sizes=%v error=%v", sizes, err)
@@ -76,24 +78,23 @@ func TestSavedTrackMutationsChunkAtForty(t *testing.T) {
 }
 
 func TestQueryOnlySavedItemMutationOutcomesAreTypedAndNeverRetried(t *testing.T) {
-	trackURI := "spotify:track:0123456789ABCDEFGHIJKL"
-	albumURI := "spotify:album:0123456789ABCDEFGHIJKL"
+	const id = "0123456789ABCDEFGHIJKL"
 	for _, operation := range []struct {
 		name   string
 		method string
 		call   func(Client) error
 	}{
 		{name: "save track", method: http.MethodPut, call: func(spotify Client) error {
-			return spotify.SaveSavedTracks(context.Background(), []string{trackURI})
+			return spotify.SaveSavedItems(context.Background(), spotifyref.Track, []string{id})
 		}},
 		{name: "remove track", method: http.MethodDelete, call: func(spotify Client) error {
-			return spotify.RemoveSavedTracks(context.Background(), []string{trackURI})
+			return spotify.RemoveSavedItems(context.Background(), spotifyref.Track, []string{id})
 		}},
 		{name: "save album", method: http.MethodPut, call: func(spotify Client) error {
-			return spotify.SaveSavedAlbums(context.Background(), []string{albumURI})
+			return spotify.SaveSavedItems(context.Background(), spotifyref.Album, []string{id})
 		}},
 		{name: "remove album", method: http.MethodDelete, call: func(spotify Client) error {
-			return spotify.RemoveSavedAlbums(context.Background(), []string{albumURI})
+			return spotify.RemoveSavedItems(context.Background(), spotifyref.Album, []string{id})
 		}},
 	} {
 		for _, test := range []struct {
@@ -145,7 +146,7 @@ func TestQueryOnlySavedItemMutationPreservesTypedAuthFailures(t *testing.T) {
 		httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return response(test.status, "secret"), nil
 		})}
-		err := (Client{HTTPClient: httpClient}).SaveSavedTracks(context.Background(), []string{"spotify:track:0123456789ABCDEFGHIJKL"})
+		err := (Client{HTTPClient: httpClient}).SaveSavedItems(context.Background(), spotifyref.Track, []string{"0123456789ABCDEFGHIJKL"})
 		var rejected *MutationRejectedError
 		if !errors.As(err, &rejected) || rejected.StatusCode != test.status || !errors.Is(err, test.want) ||
 			err.Error() != test.want.Error() || strings.Contains(err.Error(), "secret") {
@@ -157,7 +158,7 @@ func TestQueryOnlySavedItemMutationPreservesTypedAuthFailures(t *testing.T) {
 func TestSavedTrackOperationsChunkAtForty(t *testing.T) {
 	for _, count := range []int{40, 41, 80, 81} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			uris := libraryURIs(count)
+			ids := libraryIDs(count)
 			var sizes []int
 			isSaved := func(uri string) bool {
 				index, _ := strconv.Atoi(strings.TrimPrefix(uri, "spotify:track:"))
@@ -177,11 +178,11 @@ func TestSavedTrackOperationsChunkAtForty(t *testing.T) {
 				}
 				return response(http.StatusOK, "["+strings.Join(values, ",")+"]"), nil
 			})}
-			got, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).CheckSavedTracks(context.Background(), uris)
+			got, err := (Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}).CheckSavedItems(context.Background(), spotifyref.Track, ids)
 			wantCalls := (count + 39) / 40
 			wantResults := make([]bool, count)
-			for index, uri := range uris {
-				wantResults[index] = isSaved(uri)
+			for index, id := range ids {
+				wantResults[index] = isSaved("spotify:track:" + id)
 			}
 			if err != nil || !slices.Equal(got, wantResults) || len(sizes) != wantCalls {
 				t.Fatalf("count=%d sizes=%v results=%v want=%v error=%v", count, sizes, got, wantResults, err)
@@ -200,7 +201,7 @@ func TestSavedTrackCheckRejectsResponseLengthMismatch(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return response(http.StatusOK, `[true]`), nil
 	})}
-	_, err := (Client{HTTPClient: httpClient}).CheckSavedTracks(context.Background(), libraryURIs(2))
+	_, err := (Client{HTTPClient: httpClient}).CheckSavedItems(context.Background(), spotifyref.Track, libraryIDs(2))
 	if !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("error=%v", err)
 	}
@@ -224,9 +225,9 @@ func TestSavedTrackMutationsUseFixedMethodsAndStopOnLaterFailure(t *testing.T) {
 			spotify := Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}
 			var err error
 			if method == http.MethodPut {
-				err = spotify.SaveSavedTracks(context.Background(), libraryURIs(81))
+				err = spotify.SaveSavedItems(context.Background(), spotifyref.Track, libraryIDs(81))
 			} else {
-				err = spotify.RemoveSavedTracks(context.Background(), libraryURIs(81))
+				err = spotify.RemoveSavedItems(context.Background(), spotifyref.Track, libraryIDs(81))
 			}
 			if !errors.Is(err, ErrUpstream) || calls != 2 {
 				t.Fatalf("calls=%d error=%v", calls, err)
@@ -243,14 +244,35 @@ func TestSavedTrackOperationsRejectInvalidInputBeforeRequest(t *testing.T) {
 	})}
 	spotify := Client{HTTPClient: httpClient}
 	for _, call := range []func() error{
-		func() error { _, err := spotify.CheckSavedTracks(context.Background(), nil); return err },
-		func() error { return spotify.SaveSavedTracks(context.Background(), []string{"0123456789ABCDEFGHIJKL"}) },
 		func() error {
-			return spotify.RemoveSavedTracks(context.Background(), []string{"spotify:album:0123456789ABCDEFGHIJKL"})
+			_, err := spotify.CheckSavedItems(context.Background(), spotifyref.Track, nil)
+			return err
+		},
+		func() error { return spotify.SaveSavedItems(context.Background(), spotifyref.Track, []string{"bad"}) },
+		func() error {
+			return spotify.RemoveSavedItems(context.Background(), spotifyref.Track, []string{"also-bad"})
 		},
 	} {
 		if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
 			t.Fatalf("calls=%d error=%v", calls, err)
+		}
+	}
+	for _, kind := range []spotifyref.Kind{spotifyref.Artist, ""} {
+		for _, call := range []func() error{
+			func() error {
+				_, err := spotify.CheckSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+				return err
+			},
+			func() error {
+				return spotify.SaveSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+			},
+			func() error {
+				return spotify.RemoveSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+			},
+		} {
+			if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
+				t.Fatalf("kind=%q calls=%d error=%v", kind, calls, err)
+			}
 		}
 	}
 }
@@ -295,7 +317,7 @@ func TestSavedAlbumListUsesFixedPathAndValidatesPage(t *testing.T) {
 func TestSavedAlbumOperationsUseGenericLibraryChunks(t *testing.T) {
 	for _, count := range []int{40, 41, 80, 81} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			uris := albumLibraryURIs(count)
+			ids := libraryIDs(count)
 			isSaved := func(uri string) bool {
 				index, _ := strconv.Atoi(strings.TrimPrefix(uri, "spotify:album:"))
 				return index%5 == 0 || index%13 == 2
@@ -313,10 +335,10 @@ func TestSavedAlbumOperationsUseGenericLibraryChunks(t *testing.T) {
 				}
 				return response(http.StatusOK, "["+strings.Join(values, ",")+"]"), nil
 			})}
-			got, err := (Client{HTTPClient: checkClient}).CheckSavedAlbums(context.Background(), uris)
+			got, err := (Client{HTTPClient: checkClient}).CheckSavedItems(context.Background(), spotifyref.Album, ids)
 			want := make([]bool, count)
-			for index, uri := range uris {
-				want[index] = isSaved(uri)
+			for index, id := range ids {
+				want[index] = isSaved("spotify:album:" + id)
 			}
 			if err != nil || !slices.Equal(got, want) || len(checkSizes) != (count+39)/40 {
 				t.Fatalf("check sizes=%v results=%v want=%v error=%v", checkSizes, got, want, err)
@@ -336,11 +358,11 @@ func TestSavedAlbumOperationsUseGenericLibraryChunks(t *testing.T) {
 				})}
 				spotify := Client{HTTPClient: httpClient}
 				if method == http.MethodPut {
-					err = spotify.SaveSavedAlbums(context.Background(), uris)
+					err = spotify.SaveSavedItems(context.Background(), spotifyref.Album, ids)
 				} else {
-					err = spotify.RemoveSavedAlbums(context.Background(), uris)
+					err = spotify.RemoveSavedItems(context.Background(), spotifyref.Album, ids)
 				}
-				if err != nil || len(sizes) != (count+39)/40 || !slices.Equal(seen, uris) {
+				if err != nil || len(sizes) != (count+39)/40 || !slices.Equal(seen, albumLibraryURIs(count)) {
 					t.Fatalf("method=%s sizes=%v seen=%v error=%v", method, sizes, seen, err)
 				}
 				for index, size := range sizes {
@@ -367,32 +389,37 @@ func TestSavedAlbumOperationsRejectWrongKindsAndMalformedResponsesBeforeContinui
 	})}
 	spotify := Client{HTTPClient: httpClient}
 	for _, call := range []func() error{
-		func() error { _, err := spotify.CheckSavedAlbums(context.Background(), nil); return err },
 		func() error {
-			return spotify.SaveSavedAlbums(context.Background(), []string{"spotify:track:0123456789ABCDEFGHIJKL"})
+			_, err := spotify.CheckSavedItems(context.Background(), spotifyref.Album, nil)
+			return err
 		},
-		func() error { return spotify.RemoveSavedAlbums(context.Background(), []string{"spotify:album:bad"}) },
+		func() error {
+			return spotify.SaveSavedItems(context.Background(), spotifyref.Album, []string{"bad"})
+		},
+		func() error {
+			return spotify.RemoveSavedItems(context.Background(), spotifyref.Album, []string{"also-bad"})
+		},
 	} {
 		if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
 			t.Fatalf("calls=%d error=%v", calls, err)
 		}
 	}
 
-	if _, err := spotify.CheckSavedAlbums(context.Background(), albumLibraryURIs(41)); !errors.Is(err, ErrInvalidResponse) || calls != 1 {
+	if _, err := spotify.CheckSavedItems(context.Background(), spotifyref.Album, libraryIDs(41)); !errors.Is(err, ErrInvalidResponse) || calls != 1 {
 		t.Fatalf("check calls=%d error=%v", calls, err)
 	}
-	for _, mutate := range []func(context.Context, []string) error{spotify.SaveSavedAlbums, spotify.RemoveSavedAlbums} {
+	for _, mutate := range []func(context.Context, spotifyref.Kind, []string) error{spotify.SaveSavedItems, spotify.RemoveSavedItems} {
 		calls = 0
-		if err := mutate(context.Background(), albumLibraryURIs(81)); !errors.Is(err, ErrUpstream) || calls != 2 {
+		if err := mutate(context.Background(), spotifyref.Album, libraryIDs(81)); !errors.Is(err, ErrUpstream) || calls != 2 {
 			t.Fatalf("mutation calls=%d error=%v", calls, err)
 		}
 	}
 }
 
-func libraryURIs(count int) []string {
+func libraryIDs(count int) []string {
 	result := make([]string, count)
 	for index := range result {
-		result[index] = fmt.Sprintf("spotify:track:%022d", index)
+		result[index] = fmt.Sprintf("%022d", index)
 	}
 	return result
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
+	"github.com/open-cli-collective/spotify-cli/internal/spotifyref"
 )
 
 const (
@@ -66,23 +67,35 @@ func TestListEmptyAndSelectedFields(t *testing.T) {
 		t.Fatalf("fields stdout=%q stderr=%q error=%v", stdout, stderr, err)
 	}
 }
-func (session *fakeSession) CheckSavedTracks(_ context.Context, uris []string) ([]bool, error) {
-	session.calls = append(session.calls, "check:"+fmt.Sprint(uris))
+func (session *fakeSession) CheckSavedItems(_ context.Context, kind spotifyref.Kind, ids []string) ([]bool, error) {
+	call := "check:"
+	if kind == spotifyref.Album {
+		call = "check-albums:"
+	}
+	session.calls = append(session.calls, call+fmt.Sprint(ids))
 	if session.checkSaved != nil {
 		return session.checkSaved, nil
 	}
-	result := make([]bool, len(uris))
+	result := make([]bool, len(ids))
 	for index := range result {
 		result[index] = index%2 == 0
 	}
 	return result, nil
 }
-func (session *fakeSession) SaveSavedTracks(_ context.Context, uris []string) error {
-	session.calls = append(session.calls, "add:"+fmt.Sprint(uris))
+func (session *fakeSession) SaveSavedItems(_ context.Context, kind spotifyref.Kind, ids []string) error {
+	call := "add:"
+	if kind == spotifyref.Album {
+		call = "add-albums:"
+	}
+	session.calls = append(session.calls, call+fmt.Sprint(ids))
 	return session.mutateErr
 }
-func (session *fakeSession) RemoveSavedTracks(_ context.Context, uris []string) error {
-	session.calls = append(session.calls, "remove:"+fmt.Sprint(uris))
+func (session *fakeSession) RemoveSavedItems(_ context.Context, kind spotifyref.Kind, ids []string) error {
+	call := "remove:"
+	if kind == spotifyref.Album {
+		call = "remove-albums:"
+	}
+	session.calls = append(session.calls, call+fmt.Sprint(ids))
 	return session.mutateErr
 }
 
@@ -101,28 +114,6 @@ func (session *fakeSession) ListSavedAlbums(_ context.Context, limit, offset int
 		}},
 		Limit: limit, Offset: offset, HasNext: session.hasNext,
 	}, nil
-}
-
-func (session *fakeSession) CheckSavedAlbums(_ context.Context, uris []string) ([]bool, error) {
-	session.calls = append(session.calls, "check-albums:"+fmt.Sprint(uris))
-	if session.checkSaved != nil {
-		return session.checkSaved, nil
-	}
-	result := make([]bool, len(uris))
-	for index := range result {
-		result[index] = index%2 == 0
-	}
-	return result, nil
-}
-
-func (session *fakeSession) SaveSavedAlbums(_ context.Context, uris []string) error {
-	session.calls = append(session.calls, "add-albums:"+fmt.Sprint(uris))
-	return session.mutateErr
-}
-
-func (session *fakeSession) RemoveSavedAlbums(_ context.Context, uris []string) error {
-	session.calls = append(session.calls, "remove-albums:"+fmt.Sprint(uris))
-	return session.mutateErr
 }
 
 func TestListExactOutputFlagsAndContinuationRouting(t *testing.T) {
@@ -150,16 +141,19 @@ func TestCheckReferenceFormsDeduplicateInFirstSeenOrder(t *testing.T) {
 	want := "REFERENCE | ID | SAVED\n" +
 		"spotify:track:" + trackID + " | " + trackID + " | true\n" +
 		"https://open.spotify.com/track/" + second + " | " + second + " | false\n"
-	if err != nil || stdout != want || stderr != "" || opens != 1 || len(session.calls) != 1 {
+	wantCall := "check:[" + trackID + " " + second + "]"
+	if err != nil || stdout != want || stderr != "" || opens != 1 || fmt.Sprint(session.calls) != "["+wantCall+"]" {
 		t.Fatalf("stdout=%q stderr=%q opens=%d calls=%v error=%v", stdout, stderr, opens, session.calls, err)
 	}
 }
 
 func TestBatchValidationHappensBeforeSession(t *testing.T) {
 	for _, verb := range []string{"check", "add", "remove"} {
-		stdout, stderr, opens, err := execute(&fakeSession{}, "library", "tracks", verb, trackID, "bad")
-		if exitcode.Code(err) != exitcode.Usage || stdout != "" || stderr != "" || opens != 0 {
-			t.Fatalf("verb=%s stdout=%q stderr=%q opens=%d error=%v", verb, stdout, stderr, opens, err)
+		for _, args := range [][]string{{trackID, "bad"}, {"spotify:album:" + albumID}} {
+			stdout, stderr, opens, err := execute(&fakeSession{}, append([]string{"library", "tracks", verb}, args...)...)
+			if exitcode.Code(err) != exitcode.Usage || stdout != "" || stderr != "" || opens != 0 {
+				t.Fatalf("verb=%s args=%v stdout=%q stderr=%q opens=%d error=%v", verb, args, stdout, stderr, opens, err)
+			}
 		}
 	}
 }
@@ -240,7 +234,7 @@ func TestMutationsEmitOnlyAfterCompleteSuccess(t *testing.T) {
 		session := &fakeSession{scopes: []string{auth.ScopeUserLibraryModify}}
 		stdout, stderr, _, err := execute(session, "library", "tracks", test.verb,
 			trackID, "spotify:track:"+trackID, "https://open.spotify.com/track/"+trackID)
-		wantCall := test.verb + ":[spotify:track:" + trackID + "]"
+		wantCall := test.verb + ":[" + trackID + "]"
 		if err != nil || stdout != test.want || stderr != "" ||
 			len(session.calls) != 1 || session.calls[0] != wantCall {
 			t.Fatalf("verb=%s stdout=%q stderr=%q calls=%v error=%v", test.verb, stdout, stderr, session.calls, err)
@@ -330,7 +324,7 @@ func TestAlbumReferencesDeduplicateAndRejectTrackKindsBeforeSession(t *testing.T
 		"spotify:album:" + albumID + " | " + albumID + " | true\n" +
 		"https://open.spotify.com/album/" + second + " | " + second + " | false\n"
 	if err != nil || stdout != want || stderr != "" || opens != 1 ||
-		fmt.Sprint(session.calls) != "[check-albums:[spotify:album:"+albumID+" spotify:album:"+second+"]]" {
+		fmt.Sprint(session.calls) != "[check-albums:["+albumID+" "+second+"]]" {
 		t.Fatalf("stdout=%q stderr=%q opens=%d calls=%v error=%v", stdout, stderr, opens, session.calls, err)
 	}
 
@@ -351,8 +345,8 @@ func TestAlbumMutationsScopeAndOutput(t *testing.T) {
 	for _, test := range []struct {
 		verb, call, want string
 	}{
-		{verb: "add", call: "add-albums:[spotify:album:" + albumID + "]", want: "added\t1\n"},
-		{verb: "remove", call: "remove-albums:[spotify:album:" + albumID + "]", want: "removed\t1\n"},
+		{verb: "add", call: "add-albums:[" + albumID + "]", want: "added\t1\n"},
+		{verb: "remove", call: "remove-albums:[" + albumID + "]", want: "removed\t1\n"},
 	} {
 		session := &fakeSession{scopes: []string{auth.ScopeUserLibraryModify}}
 		stdout, stderr, _, err := execute(session, "library", "albums", test.verb,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
+	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
 	"github.com/open-cli-collective/spotify-cli/internal/session"
 )
 
@@ -38,7 +39,7 @@ func TestTrackSearchUsesContinuationOffset(t *testing.T) {
 	command := New(Dependencies{OpenSession: opener})
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"track", "q", "--next-page-token", encodePageToken("track", 10)})
+	command.SetArgs([]string{"track", "q", "--next-page-token", pagetoken.Encode("track", 10)})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestTrackSearchClassifiesAPIFailuresWithoutLeakingBodies(t *testing.T) {
 
 func TestTrackSearchDoesNotAdvertiseOffsetPastCeiling(t *testing.T) {
 	body := `{"tracks":{"items":[],"limit":10,"offset":1000,"total":2000,"next":"ignored-provider-url"}}`
-	stdout, stderr, _, err := executeSearch(body, "track", "q", "--next-page-token", encodePageToken("track", 1000))
+	stdout, stderr, _, err := executeSearch(body, "track", "q", "--next-page-token", pagetoken.Encode("track", 1000))
 	if err != nil || stdout != "ID | TRACK | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n" || stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q error=%v", stdout, stderr, err)
 	}
@@ -200,8 +201,8 @@ func TestCatalogSearchValidatesBeforeSession(t *testing.T) {
 		{"artist", "q", "--max", "0"},
 		{"album", "q", "--max", "11"},
 		{"artist", "q", "--fields", "invalid"},
-		{"album", "q", "--next-page-token", encodePageToken("artist", 1)},
-		{"artist", "q", "--next-page-token", encodePageToken("track", 1)},
+		{"album", "q", "--next-page-token", pagetoken.Encode("artist", 1)},
+		{"artist", "q", "--next-page-token", pagetoken.Encode("track", 1)},
 	}
 	for _, args := range invalid {
 		_, _, opens, err := executeSearch(``, args...)
@@ -228,7 +229,7 @@ func TestCatalogSearchUsesOwnContinuationOffset(t *testing.T) {
 		command := New(Dependencies{OpenSession: opener})
 		command.SetOut(io.Discard)
 		command.SetErr(io.Discard)
-		command.SetArgs([]string{surface, "q", "--max", "1", "--next-page-token", encodePageToken(surface, 10)})
+		command.SetArgs([]string{surface, "q", "--max", "1", "--next-page-token", pagetoken.Encode(surface, 10)})
 		if err := command.Execute(); err != nil || offset != "10" {
 			t.Fatalf("surface=%s offset=%q error=%v", surface, offset, err)
 		}

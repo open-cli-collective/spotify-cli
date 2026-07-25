@@ -542,7 +542,7 @@ func TestInitRequiresStdinModeForHTTPSCallback(t *testing.T) {
 
 func TestBackendValidationRunsForStoreFreeCommands(t *testing.T) {
 	for _, backend := range []string{"definitely-invalid", "memory"} {
-		for _, args := range [][]string{{"config", "path"}, {"search", "track", "query"}} {
+		for _, args := range [][]string{nil, {"config", "path"}, {"search", "track", "query"}} {
 			h := newHarness(t)
 			err := h.execute(append([]string{"--backend", backend}, args...)...)
 			if exitcode.Code(err) != exitcode.Usage {

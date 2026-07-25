@@ -86,9 +86,11 @@ func runTrack(command *cobra.Command, deps Dependencies, query string, options s
 	if err != nil {
 		return exitcode.New(cmdutil.Classify(err), err)
 	}
-	rendered := output.RenderTracks(page.Items, fields)
+	var rendered string
 	if options.id {
 		rendered = output.RenderTrackIDs(page.Items)
+	} else {
+		rendered = output.RenderTracks(page.Items, fields)
 	}
 	return writeSearchOutput(command, rendered, "track", page.Offset, page.Limit, page.HasNext)
 }
@@ -121,9 +123,11 @@ func runAlbum(command *cobra.Command, deps Dependencies, query string, options s
 	if err != nil {
 		return exitcode.New(cmdutil.Classify(err), err)
 	}
-	rendered := output.RenderAlbums(page.Items, fields)
+	var rendered string
 	if options.id {
 		rendered = output.RenderAlbumIDs(page.Items)
+	} else {
+		rendered = output.RenderAlbums(page.Items, fields)
 	}
 	return writeSearchOutput(command, rendered, "album", page.Offset, page.Limit, page.HasNext)
 }
@@ -173,9 +177,11 @@ func runArtist(command *cobra.Command, deps Dependencies, query string, options 
 	if err != nil {
 		return exitcode.New(cmdutil.Classify(err), err)
 	}
-	rendered := output.RenderArtists(page.Items, fields)
+	var rendered string
 	if options.id {
 		rendered = output.RenderArtistIDs(page.Items)
+	} else {
+		rendered = output.RenderArtists(page.Items, fields)
 	}
 	return writeSearchOutput(command, rendered, "artist", page.Offset, page.Limit, page.HasNext)
 }
@@ -208,8 +214,8 @@ func writeSearchOutput(command *cobra.Command, rendered, surface string, offset,
 }
 
 func decodePageToken(surface, value string) (int, error) {
-	offset, err := pagetoken.Decode(surface, value, maxOffset)
-	if err != nil {
+	offset, err := pagetoken.Decode(surface, value)
+	if err != nil || offset > maxOffset {
 		return 0, errors.New("invalid --next-page-token")
 	}
 	return offset, nil

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -611,7 +610,7 @@ func newItemsList(deps Dependencies) *cobra.Command {
 				}
 			}
 			scope := playlistItemPageScope(id)
-			offset, err := pagetoken.Decode(scope, opts.nextPageToken, math.MaxInt-50)
+			offset, err := pagetoken.Decode(scope, opts.nextPageToken)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
@@ -666,7 +665,7 @@ func newList(deps Dependencies) *cobra.Command {
 					return exitcode.New(exitcode.Usage, err)
 				}
 			}
-			offset, err := pagetoken.Decode(playlistPageScope, opts.nextPageToken, math.MaxInt-50)
+			offset, err := pagetoken.Decode(playlistPageScope, opts.nextPageToken)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
@@ -679,9 +678,11 @@ func newList(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(cmdutil.Classify(err), err)
 			}
-			rendered := output.RenderPlaylists(page.Items, fields)
+			var rendered string
 			if opts.id {
 				rendered = output.RenderPlaylistIDs(page.Items)
+			} else {
+				rendered = output.RenderPlaylists(page.Items, fields)
 			}
 			if err := writeOutput(command, rendered); err != nil {
 				return err
@@ -727,9 +728,11 @@ func newGet(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(cmdutil.Classify(err), err)
 			}
-			rendered := output.RenderPlaylist(playlist, fields)
+			var rendered string
 			if opts.id {
 				rendered = output.RenderPlaylistIDs([]client.Playlist{playlist})
+			} else {
+				rendered = output.RenderPlaylist(playlist, fields)
 			}
 			return writeOutput(command, rendered)
 		},

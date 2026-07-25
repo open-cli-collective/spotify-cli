@@ -9,7 +9,6 @@ const (
 	Generic  = 1
 	Usage    = 2
 	Config   = 3
-	NotFound = 4
 	Upstream = 5
 )
 

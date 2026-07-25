@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -92,9 +91,11 @@ func newTrackList(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderSavedTracks(page.Items, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderSavedTrackIDs(page.Items)
+		} else {
+			rendered = output.RenderSavedTracks(page.Items, fields)
 		}
 		return writeListOutput(command, rendered, "tracks", trackPageScope, page.Offset, page.Limit, page.HasNext)
 	})
@@ -123,9 +124,11 @@ func newAlbumList(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return exitcode.New(cmdutil.Classify(err), err)
 		}
-		rendered := output.RenderSavedAlbums(page.Items, fields)
+		var rendered string
 		if opts.id {
 			rendered = output.RenderSavedAlbumIDs(page.Items)
+		} else {
+			rendered = output.RenderSavedAlbums(page.Items, fields)
 		}
 		return writeListOutput(command, rendered, "albums", albumPageScope, page.Offset, page.Limit, page.HasNext)
 	})
@@ -141,7 +144,7 @@ func listCommand(short, resource, pageScope string, opts *listOptions, prepare f
 			if err := prepare(); err != nil {
 				return err
 			}
-			offset, err := pagetoken.Decode(pageScope, opts.nextPageToken, math.MaxInt-50)
+			offset, err := pagetoken.Decode(pageScope, opts.nextPageToken)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}

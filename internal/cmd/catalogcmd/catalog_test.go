@@ -124,6 +124,14 @@ func TestCatalogGetOutputFlags(t *testing.T) {
 	if err != nil || stdout != id+"\n" {
 		t.Fatalf("stdout=%q error=%v", stdout, err)
 	}
+	stdout, _, _, _, err = execute("albums", "get", id, "--id")
+	if err != nil || stdout != id+"\n" {
+		t.Fatalf("album stdout=%q error=%v", stdout, err)
+	}
+	stdout, _, _, _, err = execute("artists", "get", id, "--id")
+	if err != nil || stdout != id+"\n" {
+		t.Fatalf("artist stdout=%q error=%v", stdout, err)
+	}
 	stdout, _, _, _, err = execute("tracks", "get", id, "--fields", "track,album_id")
 	if err != nil || stdout != id+"  Song\nAlbum ID: album-1\n" {
 		t.Fatalf("stdout=%q error=%v", stdout, err)

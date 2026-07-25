@@ -138,21 +138,17 @@ func requireEOF(decoder *json.Decoder) error {
 }
 
 func normalizeScopes(input []string) ([]string, error) {
-	seen := make(map[string]struct{}, len(input))
-	for _, value := range input {
+	if len(input) == 0 {
+		return nil, errors.New("oauth token envelope scopes must not be empty")
+	}
+	result := make([]string, len(input))
+	for i, value := range input {
 		scope := strings.TrimSpace(value)
 		if scope == "" {
 			return nil, errors.New("oauth token envelope scopes must contain only non-empty strings")
 		}
-		seen[scope] = struct{}{}
-	}
-	if len(seen) == 0 {
-		return nil, errors.New("oauth token envelope scopes must not be empty")
-	}
-	result := make([]string, 0, len(seen))
-	for scope := range seen {
-		result = append(result, scope)
+		result[i] = scope
 	}
 	slices.Sort(result)
-	return result, nil
+	return slices.Compact(result), nil
 }

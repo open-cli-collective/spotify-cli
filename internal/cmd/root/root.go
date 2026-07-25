@@ -33,22 +33,19 @@ import (
 
 // Dependencies contains the runtime effects used by the command tree.
 type Dependencies struct {
-	In                     io.Reader
-	Out                    io.Writer
-	ErrOut                 io.Writer
-	Scope                  statedir.Scope
-	Cache                  statedir.Cache
-	Data                   statedir.Data
-	OpenConfigStore        configcmd.StoreOpener
-	OpenInitStore          initcmd.StoreOpener
-	OpenSessionStore       session.StoreOpener
-	OpenSetCredentialStore setcredential.StoreOpener
-	Now                    func() time.Time
-	Interactive            bool
-	OpenBrowser            func(string) error
-	HTTPClient             *http.Client
-	OAuthEndpoints         auth.Endpoints
-	APIBaseURL             string
+	In             io.Reader
+	Out            io.Writer
+	ErrOut         io.Writer
+	Scope          statedir.Scope
+	Cache          statedir.Cache
+	Data           statedir.Data
+	OpenStore      credentials.StoreOpener
+	Now            func() time.Time
+	Interactive    bool
+	OpenBrowser    func(string) error
+	HTTPClient     *http.Client
+	OAuthEndpoints auth.Endpoints
+	APIBaseURL     string
 }
 
 // New constructs the top-level command from its runtime effects.
@@ -79,10 +76,16 @@ func New(deps Dependencies) *cobra.Command {
 		return exitcode.New(exitcode.Usage, err)
 	})
 	cmd.AddCommand(configcmd.New(configcmd.Dependencies{
-		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data, OpenStore: deps.OpenConfigStore,
+		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data,
+		OpenStore: func(request credentials.OpenRequest) (configcmd.CredentialStore, error) {
+			return deps.OpenStore(request)
+		},
 	}))
 	cmd.AddCommand(setcredential.New(setcredential.Dependencies{
-		Scope: deps.Scope, OpenStore: deps.OpenSetCredentialStore, Now: deps.Now,
+		Scope: deps.Scope, Now: deps.Now,
+		OpenStore: func(request credentials.OpenRequest) (setcredential.CredentialStore, error) {
+			return deps.OpenStore(request)
+		},
 	}))
 	authorizer := auth.Authorizer{
 		HTTPClient: deps.HTTPClient, Endpoints: deps.OAuthEndpoints, OpenBrowser: deps.OpenBrowser,
@@ -90,7 +93,10 @@ func New(deps Dependencies) *cobra.Command {
 	cmd.AddCommand(initcmd.New(initcmd.Dependencies{
 		Scope: deps.Scope, Interactive: deps.Interactive,
 		Initializer: initcmd.Initializer{
-			OpenStore: deps.OpenInitStore, Now: deps.Now, Authorize: authorizer.Authorize,
+			OpenStore: func(request credentials.OpenRequest) (initcmd.CredentialStore, error) {
+				return deps.OpenStore(request)
+			},
+			Now: deps.Now, Authorize: authorizer.Authorize,
 			Verify: func(ctx context.Context, _ config.Config, envelope token.Envelope) (client.User, error) {
 				oauthContext := ctx
 				if deps.HTTPClient != nil {
@@ -106,7 +112,10 @@ func New(deps Dependencies) *cobra.Command {
 		},
 	}))
 	sessionOpener := session.Opener{
-		Scope: deps.Scope, OpenStore: deps.OpenSessionStore,
+		Scope: deps.Scope,
+		OpenStore: func(request credentials.OpenRequest) (session.CredentialStore, error) {
+			return deps.OpenStore(request)
+		},
 		Now: deps.Now, HTTPClient: deps.HTTPClient,
 		TokenURL: deps.OAuthEndpoints.TokenURL, APIBaseURL: deps.APIBaseURL,
 	}

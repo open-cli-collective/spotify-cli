@@ -39,9 +39,22 @@ type OpenRequest struct {
 	BackendSet bool
 }
 
-// ProductionOpener returns the concrete cli-common store opener.
-func ProductionOpener(filePassphrase func() (string, error)) func(OpenRequest) (*credstore.Store, error) {
-	return func(request OpenRequest) (*credstore.Store, error) {
+// Store is the complete credential capability available at the composition root.
+type Store interface {
+	Backend() (credstore.Backend, credstore.Source)
+	Close() error
+	Get(profile, key string) (string, error)
+	Set(profile, key, value string, opts ...credstore.SetOpt) error
+	Delete(profile, key string) error
+	Exists(profile, key string) (bool, error)
+}
+
+// StoreOpener opens the complete credential capability.
+type StoreOpener func(OpenRequest) (Store, error)
+
+// ProductionOpener returns the production credential store opener.
+func ProductionOpener(filePassphrase func() (string, error)) StoreOpener {
+	return func(request OpenRequest) (Store, error) {
 		opts, err := buildOptions(request, filePassphrase)
 		if err != nil {
 			return nil, err

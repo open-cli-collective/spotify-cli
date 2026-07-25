@@ -14,6 +14,7 @@ import (
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/spf13/cobra"
 
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
@@ -36,7 +37,6 @@ type StoreOpener func(credentials.OpenRequest) (CredentialStore, error)
 type Dependencies struct {
 	Scope     statedir.Scope
 	OpenStore StoreOpener
-	Backend   *string
 	Now       func() time.Time
 }
 
@@ -63,12 +63,7 @@ func New(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-credential",
 		Short: "Write one OAuth credential without displaying it",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return exitcode.New(exitcode.Usage, errors.New("set-credential takes no arguments"))
-			}
-			return nil
-		},
+		Args:  cmdutil.NoArgs("set-credential"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return run(cmd, deps, ref, key, fromEnv, stdin, overwrite, jsonOutput)
 		},
@@ -97,7 +92,11 @@ func run(cmd *cobra.Command, deps Dependencies, ref, key, fromEnv string, stdin,
 		return exitcode.NewQuiet(code, err)
 	}
 	backendFlag := cmd.Flags().Lookup(credstore.BackendFlagName)
-	if err := credentials.ValidateExplicitBackend(pointerValue(deps.Backend), backendFlag != nil && backendFlag.Changed); err != nil {
+	backendValue := ""
+	if backendFlag != nil {
+		backendValue = backendFlag.Value.String()
+	}
+	if err := credentials.ValidateExplicitBackend(backendValue, backendFlag != nil && backendFlag.Changed); err != nil {
 		return fail(exitcode.Usage, err)
 	}
 
@@ -147,7 +146,7 @@ func run(cmd *cobra.Command, deps Dependencies, ref, key, fromEnv string, stdin,
 
 	store, err := deps.OpenStore(credentials.OpenRequest{
 		Config:     cfg,
-		Backend:    pointerValue(deps.Backend),
+		Backend:    backendValue,
 		BackendSet: backendFlag != nil && backendFlag.Changed,
 	})
 	if err != nil {
@@ -206,11 +205,4 @@ func readEnvelope(cmd *cobra.Command, fromEnv string, stdin bool) ([]byte, error
 		return nil, errors.New("OAuth token envelope exceeds 1 MiB")
 	}
 	return []byte(strings.TrimSpace(string(data))), nil
-}
-
-func pointerValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

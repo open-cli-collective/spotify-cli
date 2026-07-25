@@ -3,7 +3,6 @@ package root
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/catalogcmd"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/configcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/initcmd"
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/librarycmd"
@@ -57,14 +57,9 @@ type Dependencies struct {
 func New(deps Dependencies) *cobra.Command {
 	var backend string
 	cmd := &cobra.Command{
-		Use:   "sptfy",
-		Short: "Use Spotify from the command line",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return exitcode.New(exitcode.Usage, errors.New("unknown command"))
-			}
-			return nil
-		},
+		Use:           "sptfy",
+		Short:         "Use Spotify from the command line",
+		Args:          cmdutil.ExactArgs(0, "unknown command"),
 		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 		Version:       version.Version,
 		SilenceErrors: true,
@@ -86,10 +81,10 @@ func New(deps Dependencies) *cobra.Command {
 		return exitcode.New(exitcode.Usage, err)
 	})
 	cmd.AddCommand(configcmd.New(configcmd.Dependencies{
-		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data, OpenStore: deps.OpenConfigStore, Backend: &backend,
+		Scope: deps.Scope, Cache: deps.Cache, Data: deps.Data, OpenStore: deps.OpenConfigStore,
 	}))
 	cmd.AddCommand(setcredential.New(setcredential.Dependencies{
-		Scope: deps.Scope, OpenStore: deps.OpenSetCredentialStore, Backend: &backend, Now: deps.Now,
+		Scope: deps.Scope, OpenStore: deps.OpenSetCredentialStore, Now: deps.Now,
 	}))
 	authorizer := auth.Authorizer{
 		HTTPClient: deps.HTTPClient, Endpoints: deps.OAuthEndpoints, OpenBrowser: deps.OpenBrowser,
@@ -99,7 +94,7 @@ func New(deps Dependencies) *cobra.Command {
 		saveConfig = func(value config.Config) error { return config.Save(deps.Scope, value) }
 	}
 	cmd.AddCommand(initcmd.New(initcmd.Dependencies{
-		Scope: deps.Scope, Backend: &backend, Interactive: deps.Interactive, Prompt: deps.Prompt,
+		Scope: deps.Scope, Interactive: deps.Interactive, Prompt: deps.Prompt,
 		Initializer: initcmd.Initializer{
 			OpenStore: deps.OpenInitStore, Now: deps.Now, Authorize: authorizer.Authorize,
 			Verify: func(ctx context.Context, _ config.Config, envelope token.Envelope) (client.User, error) {
@@ -125,25 +120,21 @@ func New(deps Dependencies) *cobra.Command {
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (mecmd.Session, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
-		Backend: &backend,
 	}))
 	cmd.AddCommand(searchcmd.New(searchcmd.Dependencies{
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (searchcmd.Session, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
-		Backend: &backend,
 	}))
 	cmd.AddCommand(catalogcmd.New(catalogcmd.Dependencies{
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (catalogcmd.Session, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
-		Backend: &backend,
 	})...)
 	cmd.AddCommand(librarycmd.New(librarycmd.Dependencies{
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (librarycmd.Session, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
-		Backend: &backend,
 	}))
 	cmd.AddCommand(playlistcmd.New(playlistcmd.Dependencies{
 		OpenReadSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.ReadSession, error) {
@@ -158,7 +149,6 @@ func New(deps Dependencies) *cobra.Command {
 		OpenUpdateSession: func(ctx context.Context, backend string, backendSet bool) (playlistcmd.UpdateSession, error) {
 			return sessionOpener.Open(ctx, backend, backendSet)
 		},
-		Backend: &backend,
 	}))
 	return cmd
 }

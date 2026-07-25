@@ -48,6 +48,14 @@ func TestMeRendersIdentity(t *testing.T) {
 	}
 }
 
+func TestMeArgumentMessage(t *testing.T) {
+	command := New(Dependencies{})
+	err := command.Args(command, []string{"extra"})
+	if err == nil || err.Error() != "me takes no arguments" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestMeJSON(t *testing.T) {
 	now := time.Now().UTC()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -294,8 +302,8 @@ func (harness *meHarness) executeTo(stdout io.Writer, args ...string) error {
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (Session, error) {
 			return opener.Open(ctx, backend, backendSet)
 		},
-		Backend: &harness.backend,
 	})
+	command.Flags().StringVar(&harness.backend, credstore.BackendFlagName, "", "")
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})
 	command.SilenceUsage = true

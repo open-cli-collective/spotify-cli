@@ -28,9 +28,13 @@ type fakeSession struct {
 	mutateErr  error
 	checkSaved []bool
 	empty      bool
+	closed     bool
 }
 
-func (session *fakeSession) Close() error     { return nil }
+func (session *fakeSession) Close() error {
+	session.closed = true
+	return nil
+}
 func (session *fakeSession) Scopes() []string { return session.scopes }
 func (session *fakeSession) ListSavedTracks(_ context.Context, limit, offset int) (client.SavedTrackPage, error) {
 	session.calls = append(session.calls, fmt.Sprintf("list:%d:%d", limit, offset))
@@ -179,9 +183,49 @@ func TestScopeGuardPrecedesResourceRequestWithOverwriteHint(t *testing.T) {
 			}
 			_, _, opens, err := execute(session, args...)
 			want := "spotify authorization lacks " + test.scope + "; run sptfy init --overwrite"
-			if exitcode.Code(err) != exitcode.Config || err.Error() != want || opens != 1 || len(session.calls) != 0 {
-				t.Fatalf("resource=%s verb=%s error=%v opens=%d calls=%v", resource.name, test.verb, err, opens, session.calls)
+			if exitcode.Code(err) != exitcode.Config || err.Error() != want || opens != 1 || len(session.calls) != 0 || !session.closed {
+				t.Fatalf("resource=%s verb=%s error=%v opens=%d calls=%v closed=%t", resource.name, test.verb, err, opens, session.calls, session.closed)
 			}
+		}
+	}
+}
+
+func TestLibraryArgumentMessages(t *testing.T) {
+	library := New(Dependencies{})
+	tracks, _, _ := library.Find([]string{"tracks"})
+	albums, _, _ := library.Find([]string{"albums"})
+	list, _, _ := library.Find([]string{"tracks", "list"})
+	check, _, _ := library.Find([]string{"tracks", "check"})
+	for _, test := range []struct {
+		command *cobra.Command
+		args    []string
+		want    string
+	}{
+		{command: library, args: []string{"extra"}, want: "library takes no arguments"},
+		{command: tracks, args: []string{"extra"}, want: "tracks takes no arguments"},
+		{command: albums, args: []string{"extra"}, want: "albums takes no arguments"},
+		{command: list, args: []string{"extra"}, want: "list takes no arguments"},
+		{command: check, want: "requires at least 1 arg(s), only received 0"},
+	} {
+		err := test.command.Args(test.command, test.args)
+		if err == nil || err.Error() != test.want {
+			t.Fatalf("command=%s args=%v error=%v", test.command.Name(), test.args, err)
+		}
+	}
+}
+
+func TestLibraryMutationErrorsAreClassified(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code int
+	}{
+		{err: client.ErrForbidden, code: exitcode.Config},
+		{err: client.ErrUpstream, code: exitcode.Upstream},
+	} {
+		_, _, _, err := execute(&fakeSession{scopes: []string{auth.ScopeUserLibraryModify}, mutateErr: test.err},
+			"library", "tracks", "add", trackID)
+		if exitcode.Code(err) != test.code || !errors.Is(err, test.err) {
+			t.Fatalf("source=%v code=%d error=%v", test.err, exitcode.Code(err), err)
 		}
 	}
 }

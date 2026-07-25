@@ -3,6 +3,7 @@ package catalogcmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -18,11 +19,15 @@ type fakeSession struct {
 	childName string
 	hasNext   bool
 	empty     bool
+	readErr   error
 }
 
 func (session *fakeSession) Close() error { return nil }
 func (session *fakeSession) GetTrack(_ context.Context, id string) (client.Track, error) {
 	session.calls = append(session.calls, "track:"+id)
+	if session.readErr != nil {
+		return client.Track{}, session.readErr
+	}
 	return client.Track{
 		ID: id, Name: "Song", Artists: []client.Artist{{ID: "artist-1", Name: "Artist"}},
 		Album: client.Album{ID: "album-1", Name: "Album"}, DurationMS: 61000,
@@ -160,6 +165,40 @@ func TestCatalogGetValidatesBeforeSession(t *testing.T) {
 		_, _, opens, _, err := execute(args...)
 		if exitcode.Code(err) != exitcode.Usage || opens != 0 {
 			t.Fatalf("args=%v error=%v code=%d opens=%d", args, err, exitcode.Code(err), opens)
+		}
+	}
+}
+
+func TestCatalogArgumentMessages(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"tracks", "extra"}, want: "tracks takes no arguments"},
+		{args: []string{"albums", "extra"}, want: "albums takes no arguments"},
+		{args: []string{"artists", "extra"}, want: "artists takes no arguments"},
+		{args: []string{"albums", "tracks", "extra"}, want: "tracks takes no arguments"},
+		{args: []string{"tracks", "get"}, want: "accepts 1 arg(s), received 0"},
+		{args: []string{"albums", "tracks", "list"}, want: "accepts 1 arg(s), received 0"},
+	} {
+		_, _, opens, _, err := execute(test.args...)
+		if err == nil || err.Error() != test.want || opens != 0 {
+			t.Fatalf("args=%v error=%v opens=%d", test.args, err, opens)
+		}
+	}
+}
+
+func TestCatalogReadErrorsAreClassified(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code int
+	}{
+		{err: client.ErrForbidden, code: exitcode.Config},
+		{err: client.ErrInvalidResponse, code: exitcode.Upstream},
+	} {
+		_, _, _, _, err := executeWithSession(&fakeSession{readErr: test.err}, "tracks", "get", "0123456789ABCDEFGHIJKL")
+		if exitcode.Code(err) != test.code || !errors.Is(err, test.err) {
+			t.Fatalf("source=%v code=%d error=%v", test.err, exitcode.Code(err), err)
 		}
 	}
 }

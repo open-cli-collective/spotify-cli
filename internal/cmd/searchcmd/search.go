@@ -8,12 +8,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/spf13/cobra"
 
-	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
-	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
 	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
@@ -39,13 +37,12 @@ type SessionOpener func(context.Context, string, bool) (Session, error)
 // Dependencies contains the authenticated effect used by search commands.
 type Dependencies struct {
 	OpenSession SessionOpener
-	Backend     *string
 }
 
 // New constructs the search command group.
 func New(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
-		Use: "search", Short: "Search Spotify", Args: noArgs,
+		Use: "search", Short: "Search Spotify", Args: cmdutil.NoArgs("search"),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(newTrack(deps), newAlbum(deps), newArtist(deps))
@@ -66,12 +63,7 @@ func newTrack(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "track <query>",
 		Short: "Search tracks (at most 10 results per page)",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return exitcode.New(exitcode.Usage, errors.New("search track requires exactly one query"))
-			}
-			return nil
-		},
+		Args:  cmdutil.ExactArgs(1, "search track requires exactly one query"),
 		RunE: func(command *cobra.Command, args []string) error {
 			return runTrack(command, deps, args[0], options)
 		},
@@ -98,14 +90,14 @@ func runTrack(command *cobra.Command, deps Dependencies, query string, options s
 			return exitcode.New(exitcode.Usage, err)
 		}
 	}
-	authenticated, err := openSession(command, deps)
+	authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = authenticated.Close() }()
 	page, err := authenticated.SearchTracks(command.Context(), query, options.max, offset)
 	if err != nil {
-		return classify(err)
+		return exitcode.New(cmdutil.Classify(err), err)
 	}
 	rendered := output.RenderTracks(page.Items, fields)
 	if options.id {
@@ -119,13 +111,8 @@ func newAlbum(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "album <query>",
 		Short: "Search albums (at most 10 results per page)",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return exitcode.New(exitcode.Usage, errors.New("search album requires exactly one query"))
-			}
-			return nil
-		},
-		RunE: func(command *cobra.Command, args []string) error { return runAlbum(command, deps, args[0], options) },
+		Args:  cmdutil.ExactArgs(1, "search album requires exactly one query"),
+		RunE:  func(command *cobra.Command, args []string) error { return runAlbum(command, deps, args[0], options) },
 	}
 	flags := command.Flags()
 	flags.IntVarP(&options.max, "max", "m", defaultMax, "Maximum results (1-10; Spotify development-mode cap)")
@@ -149,14 +136,14 @@ func runAlbum(command *cobra.Command, deps Dependencies, query string, options s
 			return exitcode.New(exitcode.Usage, err)
 		}
 	}
-	authenticated, err := openSession(command, deps)
+	authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = authenticated.Close() }()
 	page, err := authenticated.SearchAlbums(command.Context(), query, options.max, offset)
 	if err != nil {
-		return classify(err)
+		return exitcode.New(cmdutil.Classify(err), err)
 	}
 	rendered := output.RenderAlbums(page.Items, fields)
 	if options.id {
@@ -170,13 +157,8 @@ func newArtist(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "artist <query>",
 		Short: "Search artists (at most 10 results per page)",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return exitcode.New(exitcode.Usage, errors.New("search artist requires exactly one query"))
-			}
-			return nil
-		},
-		RunE: func(command *cobra.Command, args []string) error { return runArtist(command, deps, args[0], options) },
+		Args:  cmdutil.ExactArgs(1, "search artist requires exactly one query"),
+		RunE:  func(command *cobra.Command, args []string) error { return runArtist(command, deps, args[0], options) },
 	}
 	flags := command.Flags()
 	flags.IntVarP(&options.max, "max", "m", defaultMax, "Maximum results (1-10; Spotify development-mode cap)")
@@ -200,14 +182,14 @@ func runArtist(command *cobra.Command, deps Dependencies, query string, options 
 			return exitcode.New(exitcode.Usage, err)
 		}
 	}
-	authenticated, err := openSession(command, deps)
+	authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = authenticated.Close() }()
 	page, err := authenticated.SearchArtists(command.Context(), query, options.max, offset)
 	if err != nil {
-		return classify(err)
+		return exitcode.New(cmdutil.Classify(err), err)
 	}
 	rendered := output.RenderArtists(page.Items, fields)
 	if options.id {
@@ -228,23 +210,6 @@ func validateSearch(query string, options searchOptions, surface string) (int, e
 		return 0, exitcode.New(exitcode.Usage, err)
 	}
 	return offset, nil
-}
-
-func openSession(command *cobra.Command, deps Dependencies) (Session, error) {
-	backendFlag := command.Flags().Lookup(credstore.BackendFlagName)
-	backendSet := backendFlag != nil && backendFlag.Changed
-	backend := pointerValue(deps.Backend)
-	if err := credentials.ValidateExplicitBackend(backend, backendSet); err != nil {
-		return nil, exitcode.New(exitcode.Usage, err)
-	}
-	if deps.OpenSession == nil {
-		return nil, exitcode.New(exitcode.Generic, errors.New("authenticated session is unavailable"))
-	}
-	authenticated, err := deps.OpenSession(command.Context(), backend, backendSet)
-	if err != nil {
-		return nil, exitcode.New(exitcode.Config, err)
-	}
-	return authenticated, nil
 }
 
 func writeSearchOutput(command *cobra.Command, rendered, surface string, offset, limit int, hasNext bool) error {
@@ -273,28 +238,4 @@ func decodePageToken(surface, value string) (int, error) {
 		return 0, errors.New("invalid --next-page-token")
 	}
 	return offset, nil
-}
-
-func classify(err error) error {
-	switch {
-	case errors.Is(err, auth.ErrInvalidGrant), errors.Is(err, auth.ErrPersistRefresh),
-		errors.Is(err, client.ErrUnauthorized), errors.Is(err, client.ErrForbidden):
-		return exitcode.New(exitcode.Config, err)
-	default:
-		return exitcode.New(exitcode.Upstream, err)
-	}
-}
-
-func noArgs(_ *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return exitcode.New(exitcode.Usage, errors.New("search takes no arguments"))
-	}
-	return nil
-}
-
-func pointerValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

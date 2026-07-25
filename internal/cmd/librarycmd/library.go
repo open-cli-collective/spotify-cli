@@ -9,12 +9,11 @@ import (
 	"math"
 	"slices"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/spf13/cobra"
 
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
-	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
 	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
@@ -46,7 +45,6 @@ type SessionOpener func(context.Context, string, bool) (Session, error)
 // Dependencies contains the authenticated effect used by library commands.
 type Dependencies struct {
 	OpenSession SessionOpener
-	Backend     *string
 }
 
 type listOptions struct {
@@ -66,10 +64,10 @@ type libraryReference struct {
 
 // New constructs the saved library command tree.
 func New(deps Dependencies) *cobra.Command {
-	command := &cobra.Command{Use: "library", Short: "Manage the Spotify library", Args: noArgs("library")}
-	tracks := &cobra.Command{Use: "tracks", Short: "Manage saved tracks", Args: noArgs("tracks")}
+	command := &cobra.Command{Use: "library", Short: "Manage the Spotify library", Args: cmdutil.NoArgs("library")}
+	tracks := &cobra.Command{Use: "tracks", Short: "Manage saved tracks", Args: cmdutil.NoArgs("tracks")}
 	tracks.AddCommand(newTrackList(deps), newCheck(deps, spotifyref.Track), newMutation(deps, spotifyref.Track, "add"), newMutation(deps, spotifyref.Track, "remove"))
-	albums := &cobra.Command{Use: "albums", Short: "Manage saved albums", Args: noArgs("albums")}
+	albums := &cobra.Command{Use: "albums", Short: "Manage saved albums", Args: cmdutil.NoArgs("albums")}
 	albums.AddCommand(newAlbumList(deps), newCheck(deps, spotifyref.Album), newMutation(deps, spotifyref.Album, "add"), newMutation(deps, spotifyref.Album, "remove"))
 	command.AddCommand(tracks, albums)
 	return command
@@ -78,7 +76,7 @@ func New(deps Dependencies) *cobra.Command {
 func newTrackList(deps Dependencies) *cobra.Command {
 	opts := listOptions{max: 10}
 	command := &cobra.Command{
-		Use: "list", Short: "List saved tracks", Args: noArgs("list"),
+		Use: "list", Short: "List saved tracks", Args: cmdutil.NoArgs("list"),
 		RunE: func(command *cobra.Command, _ []string) error {
 			if opts.max < 1 || opts.max > 50 {
 				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
@@ -102,7 +100,7 @@ func newTrackList(deps Dependencies) *cobra.Command {
 			defer func() { _ = authenticated.Close() }()
 			page, err := authenticated.ListSavedTracks(command.Context(), opts.max, offset)
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			rendered := output.RenderSavedTracks(page.Items, fields)
 			if opts.id {
@@ -132,7 +130,7 @@ func newTrackList(deps Dependencies) *cobra.Command {
 func newAlbumList(deps Dependencies) *cobra.Command {
 	opts := listOptions{max: 10}
 	command := &cobra.Command{
-		Use: "list", Short: "List saved albums", Args: noArgs("list"),
+		Use: "list", Short: "List saved albums", Args: cmdutil.NoArgs("list"),
 		RunE: func(command *cobra.Command, _ []string) error {
 			if opts.max < 1 || opts.max > 50 {
 				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
@@ -156,7 +154,7 @@ func newAlbumList(deps Dependencies) *cobra.Command {
 			defer func() { _ = authenticated.Close() }()
 			page, err := authenticated.ListSavedAlbums(command.Context(), opts.max, offset)
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			rendered := output.RenderSavedAlbums(page.Items, fields)
 			if opts.id {
@@ -187,7 +185,7 @@ func newCheck(deps Dependencies, kind spotifyref.Kind) *cobra.Command {
 	plural := resourcePlural(kind)
 	return &cobra.Command{
 		Use: "check <" + string(kind) + "-reference>...", Short: "Check whether " + plural + " are saved",
-		Args: minimumArgs(1),
+		Args: cmdutil.MinimumArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			references, err := parseReferences(args, kind)
 			if err != nil {
@@ -200,7 +198,7 @@ func newCheck(deps Dependencies, kind spotifyref.Kind) *cobra.Command {
 			defer func() { _ = authenticated.Close() }()
 			saved, err := checkSaved(command.Context(), authenticated, kind, libraryURIs(references))
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			if len(saved) != len(references) {
 				return exitcode.New(exitcode.Upstream, client.ErrInvalidResponse)
@@ -221,7 +219,7 @@ func newMutation(deps Dependencies, kind spotifyref.Kind, verb string) *cobra.Co
 	plural := resourcePlural(kind)
 	return &cobra.Command{
 		Use: verb + " <" + string(kind) + "-reference>...", Short: verb + " " + plural + " in the library",
-		Args: minimumArgs(1),
+		Args: cmdutil.MinimumArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			references, err := parseReferences(args, kind)
 			if err != nil {
@@ -239,7 +237,7 @@ func newMutation(deps Dependencies, kind spotifyref.Kind, verb string) *cobra.Co
 				err = removeItems(command.Context(), authenticated, kind, uris)
 			}
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			result := "added"
 			if verb == "remove" {
@@ -307,53 +305,13 @@ func removeItems(ctx context.Context, session Session, kind spotifyref.Kind, uri
 }
 
 func openSession(command *cobra.Command, deps Dependencies, requiredScope string) (Session, error) {
-	backendFlag := command.Flags().Lookup(credstore.BackendFlagName)
-	backendSet := backendFlag != nil && backendFlag.Changed
-	backend := ""
-	if deps.Backend != nil {
-		backend = *deps.Backend
-	}
-	if err := credentials.ValidateExplicitBackend(backend, backendSet); err != nil {
-		return nil, exitcode.New(exitcode.Usage, err)
-	}
-	if deps.OpenSession == nil {
-		return nil, exitcode.New(exitcode.Generic, errors.New("authenticated session is unavailable"))
-	}
-	authenticated, err := deps.OpenSession(command.Context(), backend, backendSet)
+	authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 	if err != nil {
-		return nil, exitcode.New(exitcode.Config, err)
+		return nil, err
 	}
 	if !slices.Contains(authenticated.Scopes(), requiredScope) {
 		_ = authenticated.Close()
 		return nil, exitcode.New(exitcode.Config, fmt.Errorf("spotify authorization lacks %s; run sptfy init --overwrite", requiredScope))
 	}
 	return authenticated, nil
-}
-
-func classify(err error) error {
-	switch {
-	case errors.Is(err, auth.ErrInvalidGrant), errors.Is(err, auth.ErrPersistRefresh),
-		errors.Is(err, client.ErrUnauthorized), errors.Is(err, client.ErrForbidden):
-		return exitcode.New(exitcode.Config, err)
-	default:
-		return exitcode.New(exitcode.Upstream, err)
-	}
-}
-
-func noArgs(use string) func(*cobra.Command, []string) error {
-	return func(_ *cobra.Command, args []string) error {
-		if len(args) != 0 {
-			return exitcode.New(exitcode.Usage, errors.New(use+" takes no arguments"))
-		}
-		return nil
-	}
-}
-
-func minimumArgs(count int) func(*cobra.Command, []string) error {
-	return func(command *cobra.Command, args []string) error {
-		if err := cobra.MinimumNArgs(count)(command, args); err != nil {
-			return exitcode.New(exitcode.Usage, err)
-		}
-		return nil
-	}
 }

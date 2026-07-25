@@ -14,6 +14,7 @@ import (
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/spf13/cobra"
 
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
@@ -38,18 +39,21 @@ type Dependencies struct {
 	Cache     statedir.Cache
 	Data      statedir.Data
 	OpenStore StoreOpener
-	Backend   *string
 }
 
 // New constructs the config command group.
 func New(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "config", Short: "Manage configuration", Args: noArgs,
+		Use: "config", Short: "Manage configuration", Args: cmdutil.NoArgs("command"),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.PersistentPreRunE = func(leaf *cobra.Command, _ []string) error {
 		flag := leaf.Flags().Lookup(credstore.BackendFlagName)
-		if err := credentials.ValidateExplicitBackend(value(deps.Backend), flag != nil && flag.Changed); err != nil {
+		backend := ""
+		if flag != nil {
+			backend = flag.Value.String()
+		}
+		if err := credentials.ValidateExplicitBackend(backend, flag != nil && flag.Changed); err != nil {
 			return exitcode.New(exitcode.Usage, err)
 		}
 		return nil
@@ -74,7 +78,7 @@ func newShow(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show non-secret configuration and credential status",
-		Args:  noArgs,
+		Args:  cmdutil.NoArgs("command"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(deps.Scope)
 			if err != nil {
@@ -84,7 +88,7 @@ func newShow(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Config, err)
 			}
-			store, err := deps.OpenStore(openRequest(cmd, deps, cfg))
+			store, err := deps.OpenStore(openRequest(cmd, cfg))
 			if err != nil {
 				return exitcode.New(exitcode.Config, fmt.Errorf("opening credential store: %w", err))
 			}
@@ -157,7 +161,7 @@ func newPath(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "path",
 		Short: "Show resolved state paths",
-		Args:  noArgs,
+		Args:  cmdutil.NoArgs("command"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, err := resolvePaths(deps)
 			if err != nil {
@@ -192,7 +196,7 @@ func newClear(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clear",
 		Short: "Clear the active OAuth credential",
-		Args:  noArgs,
+		Args:  cmdutil.NoArgs("command"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, runErr := runClear(cmd, deps, all, dryRun)
 			var renderErr error
@@ -279,7 +283,7 @@ func runClear(cmd *cobra.Command, deps Dependencies, all, dryRun bool) (clearRes
 
 func clearCredential(cmd *cobra.Command, deps Dependencies, cfg config.Config, profile string) (clearAction, error) {
 	target := cfg.CredentialRef + "/" + credentials.OAuthTokenKey
-	store, err := deps.OpenStore(openRequest(cmd, deps, cfg))
+	store, err := deps.OpenStore(openRequest(cmd, cfg))
 	if err != nil {
 		return clearAction{Status: "skipped", Type: "credential", Target: target}, fmt.Errorf("opening credential store: %w", err)
 	}
@@ -341,23 +345,13 @@ func resolvePaths(deps Dependencies) (pathResult, error) {
 	return pathResult{Config: configPath, Cache: cachePath, Data: dataPath}, nil
 }
 
-func openRequest(cmd *cobra.Command, deps Dependencies, cfg config.Config) credentials.OpenRequest {
+func openRequest(cmd *cobra.Command, cfg config.Config) credentials.OpenRequest {
 	flag := cmd.Flags().Lookup(credstore.BackendFlagName)
-	return credentials.OpenRequest{Config: cfg, Backend: value(deps.Backend), BackendSet: flag != nil && flag.Changed}
-}
-
-func value(pointer *string) string {
-	if pointer == nil {
-		return ""
+	backend := ""
+	if flag != nil {
+		backend = flag.Value.String()
 	}
-	return *pointer
-}
-
-func noArgs(_ *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return exitcode.New(exitcode.Usage, errors.New("command takes no arguments"))
-	}
-	return nil
+	return credentials.OpenRequest{Config: cfg, Backend: backend, BackendSet: flag != nil && flag.Changed}
 }
 
 func writeJSON(cmd *cobra.Command, value any) error {

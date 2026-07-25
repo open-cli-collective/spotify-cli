@@ -172,6 +172,27 @@ func TestPlaylistCommandsValidateBeforeSession(t *testing.T) {
 	}
 }
 
+func TestPlaylistArgumentMessages(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"playlists", "extra"}, want: "playlists takes no arguments"},
+		{args: []string{"playlists", "items", "extra"}, want: "items takes no arguments"},
+		{args: []string{"playlists", "list", "extra"}, want: "list takes no arguments"},
+		{args: []string{"playlists", "get"}, want: "accepts 1 arg(s), received 0"},
+		{args: []string{"playlists", "items", "list"}, want: "accepts 1 arg(s), received 0"},
+		{args: []string{"playlists", "items", "add", playlistID}, want: "requires at least 2 arg(s), only received 1"},
+		{args: []string{"playlists", "items", "remove", playlistID}, want: "accepts 2 arg(s), received 1"},
+		{args: []string{"playlists", "items", "update", playlistID}, want: "accepts 2 arg(s), received 1"},
+	} {
+		_, _, opens, err := execute(&fakeSession{}, test.args...)
+		if err == nil || err.Error() != test.want || opens != 0 {
+			t.Fatalf("args=%v error=%v opens=%d", test.args, err, opens)
+		}
+	}
+}
+
 func TestPlaylistScopeGuardRequiresBothScopesWithOverwriteHint(t *testing.T) {
 	for _, scopes := range [][]string{nil, {auth.ScopePlaylistReadCollaborative}, {auth.ScopePlaylistReadPrivate}} {
 		for _, args := range [][]string{{"playlists", "list"}, {"playlists", "get", playlistID}, {"playlists", "items", "list", playlistID}} {

@@ -12,12 +12,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/spf13/cobra"
 
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
-	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
 	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
@@ -81,7 +80,6 @@ type Dependencies struct {
 	OpenAddSession    AddSessionOpener
 	OpenRemoveSession RemoveSessionOpener
 	OpenUpdateSession UpdateSessionOpener
-	Backend           *string
 }
 
 type addResult struct {
@@ -241,7 +239,7 @@ type listOptions struct {
 func New(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use: "playlists", Aliases: []string{"playlist"}, Short: "Manage Spotify playlists",
-		Args: noArgs("playlists"), RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
+		Args: cmdutil.NoArgs("playlists"), RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(newList(deps), newGet(deps), newItems(deps))
 	return command
@@ -249,7 +247,7 @@ func New(deps Dependencies) *cobra.Command {
 
 func newItems(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
-		Use: "items", Short: "Manage ordered Spotify playlist items", Args: noArgs("items"),
+		Use: "items", Short: "Manage ordered Spotify playlist items", Args: cmdutil.NoArgs("items"),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(newItemsList(deps), newItemsAdd(deps), newItemsRemove(deps), newItemsUpdate(deps))
@@ -260,12 +258,7 @@ func newItemsAdd(deps Dependencies) *cobra.Command {
 	position := -1
 	command := &cobra.Command{
 		Use: "add <playlist-reference> <track-reference>...", Short: "Add tracks to a Spotify playlist",
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.MinimumNArgs(2)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.MinimumArgs(2),
 		RunE: func(command *cobra.Command, args []string) error {
 			playlistID, err := spotifyref.Parse(args[0], spotifyref.Playlist)
 			if err != nil {
@@ -282,7 +275,7 @@ func newItemsAdd(deps Dependencies) *cobra.Command {
 			if position < 0 && command.Flags().Changed("position") {
 				return exitcode.New(exitcode.Usage, errors.New("--position must be nonnegative"))
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenAddSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
+			authenticated, err := openSession(command, deps.OpenAddSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
 			if err != nil {
 				return err
 			}
@@ -308,12 +301,7 @@ func newItemsAdd(deps Dependencies) *cobra.Command {
 func newItemsRemove(deps Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use: "remove <playlist-reference> <zero-based-position>", Short: "Remove one track from a Spotify playlist",
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(2)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(2, ""),
 		RunE: func(command *cobra.Command, args []string) error {
 			playlistID, err := spotifyref.Parse(args[0], spotifyref.Playlist)
 			if err != nil {
@@ -323,7 +311,7 @@ func newItemsRemove(deps Dependencies) *cobra.Command {
 			if err != nil || position < 0 {
 				return exitcode.New(exitcode.Usage, errors.New("position must be a nonnegative integer"))
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenRemoveSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
+			authenticated, err := openSession(command, deps.OpenRemoveSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
 			if err != nil {
 				return err
 			}
@@ -342,12 +330,7 @@ func newItemsUpdate(deps Dependencies) *cobra.Command {
 	var itemReference string
 	command := &cobra.Command{
 		Use: "update <playlist-reference> <zero-based-position> --item <track-reference>", Short: "Replace one track in a Spotify playlist",
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(2)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(2, ""),
 		RunE: func(command *cobra.Command, args []string) error {
 			playlistID, err := spotifyref.Parse(args[0], spotifyref.Playlist)
 			if err != nil {
@@ -364,7 +347,7 @@ func newItemsUpdate(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, err)
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenUpdateSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
+			authenticated, err := openSession(command, deps.OpenUpdateSession, auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic)
 			if err != nil {
 				return err
 			}
@@ -611,12 +594,7 @@ func newItemsList(deps Dependencies) *cobra.Command {
 	opts := listOptions{max: 10}
 	command := &cobra.Command{
 		Use: "list <spotify-id-uri-or-url>", Short: "List ordered Spotify playlist items",
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(1)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(1, ""),
 		RunE: func(command *cobra.Command, args []string) error {
 			id, err := spotifyref.Parse(args[0], spotifyref.Playlist)
 			if err != nil {
@@ -637,14 +615,14 @@ func newItemsList(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenReadSession)
+			authenticated, err := openSession(command, deps.OpenReadSession)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
 			page, err := authenticated.ListPlaylistItems(command.Context(), id, opts.max, offset)
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			rendered := output.RenderPlaylistItemIDs(page.Items)
 			if !opts.id {
@@ -675,7 +653,7 @@ func playlistItemPageScope(id string) string {
 func newList(deps Dependencies) *cobra.Command {
 	opts := listOptions{max: 10}
 	command := &cobra.Command{
-		Use: "list", Short: "List current user's Spotify playlists", Args: noArgs("list"),
+		Use: "list", Short: "List current user's Spotify playlists", Args: cmdutil.NoArgs("list"),
 		RunE: func(command *cobra.Command, _ []string) error {
 			if opts.max < 1 || opts.max > 50 {
 				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
@@ -692,14 +670,14 @@ func newList(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenReadSession)
+			authenticated, err := openSession(command, deps.OpenReadSession)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
 			page, err := authenticated.ListCurrentUserPlaylists(command.Context(), opts.max, offset)
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			rendered := output.RenderPlaylists(page.Items, fields)
 			if opts.id {
@@ -727,12 +705,7 @@ func newGet(deps Dependencies) *cobra.Command {
 	var opts options
 	command := &cobra.Command{
 		Use: "get <spotify-id-uri-or-url>", Short: "Get one Spotify playlist",
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(1)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(1, ""),
 		RunE: func(command *cobra.Command, args []string) error {
 			id, err := spotifyref.Parse(args[0], spotifyref.Playlist)
 			if err != nil {
@@ -745,14 +718,14 @@ func newGet(deps Dependencies) *cobra.Command {
 					return exitcode.New(exitcode.Usage, err)
 				}
 			}
-			authenticated, err := openSession(command, deps.Backend, deps.OpenReadSession)
+			authenticated, err := openSession(command, deps.OpenReadSession)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = authenticated.Close() }()
 			playlist, err := authenticated.GetPlaylist(command.Context(), id)
 			if err != nil {
-				return classify(err)
+				return exitcode.New(cmdutil.Classify(err), err)
 			}
 			rendered := output.RenderPlaylist(playlist, fields)
 			if opts.id {
@@ -773,23 +746,11 @@ func addOutputFlags(command *cobra.Command, opts *options, idNoun string) {
 	flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
 }
 
-func openSession[T authenticatedSession](command *cobra.Command, backendValue *string, opener func(context.Context, string, bool) (T, error), additionalScopes ...string) (T, error) {
+func openSession[T authenticatedSession](command *cobra.Command, opener func(context.Context, string, bool) (T, error), additionalScopes ...string) (T, error) {
 	var zero T
-	backendFlag := command.Flags().Lookup(credstore.BackendFlagName)
-	backendSet := backendFlag != nil && backendFlag.Changed
-	backend := ""
-	if backendValue != nil {
-		backend = *backendValue
-	}
-	if err := credentials.ValidateExplicitBackend(backend, backendSet); err != nil {
-		return zero, exitcode.New(exitcode.Usage, err)
-	}
-	if opener == nil {
-		return zero, exitcode.New(exitcode.Generic, errors.New("authenticated session is unavailable"))
-	}
-	authenticated, err := opener(command.Context(), backend, backendSet)
+	authenticated, err := cmdutil.OpenSession(command, opener)
 	if err != nil {
-		return zero, exitcode.New(exitcode.Config, err)
+		return zero, err
 	}
 	requiredScopes := append([]string{auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate}, additionalScopes...)
 	for _, scope := range requiredScopes {
@@ -808,17 +769,7 @@ func classifyMutation(err error) error {
 		errors.Is(err, errUpdateSame), errors.Is(err, errUpdateDuplicate):
 		return exitcode.New(exitcode.Usage, err)
 	default:
-		return classify(err)
-	}
-}
-
-func classify(err error) error {
-	switch {
-	case errors.Is(err, auth.ErrInvalidGrant), errors.Is(err, auth.ErrPersistRefresh),
-		errors.Is(err, client.ErrUnauthorized), errors.Is(err, client.ErrForbidden):
-		return exitcode.New(exitcode.Config, err)
-	default:
-		return exitcode.New(exitcode.Upstream, err)
+		return exitcode.New(cmdutil.Classify(err), err)
 	}
 }
 
@@ -856,13 +807,4 @@ func safeErrorMetadata(value string) string {
 		return "-"
 	}
 	return value
-}
-
-func noArgs(use string) func(*cobra.Command, []string) error {
-	return func(_ *cobra.Command, args []string) error {
-		if len(args) != 0 {
-			return exitcode.New(exitcode.Usage, errors.New(use+" takes no arguments"))
-		}
-		return nil
-	}
 }

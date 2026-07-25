@@ -170,6 +170,14 @@ func TestNonInteractiveInitNamesMissingClientID(t *testing.T) {
 	}
 }
 
+func TestInitArgumentMessage(t *testing.T) {
+	harness := newInitHarness(t)
+	err := harness.execute("extra")
+	if err == nil || err.Error() != "init takes no arguments" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestInitRefusesExistingCredentialBeforeAuthorization(t *testing.T) {
 	harness := newInitHarness(t)
 	harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
@@ -380,7 +388,7 @@ func (harness *initHarness) envelope() token.Envelope {
 
 func (harness *initHarness) execute(args ...string) error {
 	command := New(Dependencies{
-		Scope: harness.scope, Backend: &harness.backend, Interactive: harness.interactive, Prompt: harness.prompt,
+		Scope: harness.scope, Interactive: harness.interactive, Prompt: harness.prompt,
 		Initializer: Initializer{
 			OpenStore: func(request credentials.OpenRequest) (CredentialStore, error) {
 				harness.requests = append(harness.requests, request)

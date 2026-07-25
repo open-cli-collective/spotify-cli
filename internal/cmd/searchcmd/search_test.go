@@ -98,6 +98,23 @@ func TestTrackSearchValidatesBeforeSession(t *testing.T) {
 	}
 }
 
+func TestSearchArgumentMessages(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"extra"}, want: "search takes no arguments"},
+		{args: []string{"track"}, want: "search track requires exactly one query"},
+		{args: []string{"album"}, want: "search album requires exactly one query"},
+		{args: []string{"artist"}, want: "search artist requires exactly one query"},
+	} {
+		_, _, opens, err := executeSearch("", test.args...)
+		if err == nil || err.Error() != test.want || opens != 0 {
+			t.Fatalf("args=%v error=%v opens=%d", test.args, err, opens)
+		}
+	}
+}
+
 func TestTrackSearchClassifiesAPIFailuresWithoutLeakingBodies(t *testing.T) {
 	for _, test := range []struct {
 		status int

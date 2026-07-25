@@ -140,11 +140,19 @@ func TestVersion(t *testing.T) {
 }
 
 func TestUnknownCommandsAreUsageErrors(t *testing.T) {
-	for _, args := range [][]string{{"frobnicate"}, {"config", "frobnicate"}} {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"frobnicate"}, want: "unknown command"},
+		{args: []string{"config", "frobnicate"}, want: "command takes no arguments"},
+		{args: []string{"config", "show", "extra"}, want: "command takes no arguments"},
+		{args: []string{"set-credential", "extra"}, want: "set-credential takes no arguments"},
+	} {
 		h := newHarness(t)
-		err := h.execute(args...)
-		if exitcode.Code(err) != exitcode.Usage {
-			t.Fatalf("args %v: error = %v, code = %d", args, err, exitcode.Code(err))
+		err := h.execute(test.args...)
+		if exitcode.Code(err) != exitcode.Usage || err.Error() != test.want {
+			t.Fatalf("args %v: error = %v, code = %d", test.args, err, exitcode.Code(err))
 		}
 	}
 }
@@ -544,6 +552,19 @@ func TestBackendValidationRunsForStoreFreeCommands(t *testing.T) {
 				t.Fatalf("backend %q args %v opened store", backend, args)
 			}
 		}
+	}
+}
+
+func TestBackendFlagIsPassedToAuthenticatedSession(t *testing.T) {
+	h := newHarness(t)
+	cfg := config.Default()
+	cfg.ClientID = "client-id"
+	if err := config.Save(h.deps.Scope, cfg); err != nil {
+		t.Fatal(err)
+	}
+	err := h.execute("--backend", "pass", "search", "track", "query")
+	if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 || h.requests[0].Backend != "pass" || !h.requests[0].BackendSet {
+		t.Fatalf("error=%v code=%d requests=%+v", err, exitcode.Code(err), h.requests)
 	}
 }
 

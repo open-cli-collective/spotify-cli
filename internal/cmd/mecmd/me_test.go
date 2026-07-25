@@ -48,6 +48,14 @@ func TestMeRendersIdentity(t *testing.T) {
 	}
 }
 
+func TestMeArgumentMessage(t *testing.T) {
+	command := New(Dependencies{})
+	err := command.Args(command, []string{"extra"})
+	if err == nil || err.Error() != "me takes no arguments" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestMeJSON(t *testing.T) {
 	now := time.Now().UTC()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

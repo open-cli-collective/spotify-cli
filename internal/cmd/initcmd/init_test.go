@@ -170,6 +170,14 @@ func TestNonInteractiveInitNamesMissingClientID(t *testing.T) {
 	}
 }
 
+func TestInitArgumentMessage(t *testing.T) {
+	harness := newInitHarness(t)
+	err := harness.execute("extra")
+	if err == nil || err.Error() != "init takes no arguments" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestInitRefusesExistingCredentialBeforeAuthorization(t *testing.T) {
 	harness := newInitHarness(t)
 	harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"

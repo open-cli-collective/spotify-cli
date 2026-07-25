@@ -40,7 +40,7 @@ func TestRenderAlbumsShapes(t *testing.T) {
 	if got := RenderAlbumIDs([]client.Album{{ID: "one"}, {ID: "two"}}); got != "one\ntwo\n" {
 		t.Fatalf("IDs = %q", got)
 	}
-	if _, err := SelectAlbumFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ID, ALBUM") {
+	if _, err := SelectAlbumFields("nope", false, false); err == nil || err.Error() != `unknown album field "nope"; valid fields: ID, ALBUM, ARTIST_IDS, ARTISTS, RELEASE_DATE, TOTAL_TRACKS, URI, URL, ALBUM_TYPE, RELEASE_DATE_PRECISION, RESTRICTION, ARTWORK` {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -112,7 +112,7 @@ func TestRenderArtistsShapes(t *testing.T) {
 	if got := RenderArtistIDs([]client.Artist{{ID: "one"}, {ID: "two"}}); got != "one\ntwo\n" {
 		t.Fatalf("IDs = %q", got)
 	}
-	if _, err := SelectArtistFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ID, ARTIST") {
+	if _, err := SelectArtistFields("nope", false, false); err == nil || err.Error() != `unknown artist field "nope"; valid fields: ID, ARTIST, URI, URL, ARTWORK` {
 		t.Fatalf("error = %v", err)
 	}
 }

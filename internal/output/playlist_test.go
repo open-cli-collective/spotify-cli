@@ -42,7 +42,7 @@ func TestPlaylistFieldsAndRendering(t *testing.T) {
 	if got := RenderPlaylistIDs([]client.Playlist{{ID: "one"}, {ID: "two"}}); got != "one\ntwo\n" {
 		t.Fatalf("ids=%q", got)
 	}
-	if _, err := SelectPlaylistFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ID, PLAYLIST") {
+	if _, err := SelectPlaylistFields("nope", false, false); err == nil || err.Error() != `unknown playlist field "nope"; valid fields: ID, PLAYLIST, OWNER_ID, OWNER, ITEM_COUNT, PUBLIC, COLLABORATIVE, URI, URL, SNAPSHOT_ID, DESCRIPTION, ARTWORK` {
 		t.Fatalf("error=%v", err)
 	}
 }

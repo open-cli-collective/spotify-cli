@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/open-cli-collective/spotify-cli/internal/client"
@@ -30,9 +31,9 @@ const (
 var (
 	defaultAlbumFields      = []AlbumField{AlbumID, AlbumName, AlbumArtistIDs, AlbumArtists, AlbumReleaseDate, AlbumTotalTracks}
 	extendedAlbumFields     = []AlbumField{AlbumURI, AlbumURL, AlbumType, AlbumReleaseDatePrecision, AlbumRestriction}
-	allAlbumFields          = append(append(append([]AlbumField(nil), defaultAlbumFields...), extendedAlbumFields...), AlbumArtwork)
-	defaultSavedAlbumFields = append([]AlbumField{AlbumAddedAt}, defaultAlbumFields...)
-	allSavedAlbumFields     = append([]AlbumField{AlbumAddedAt}, allAlbumFields...)
+	allAlbumFields          = slices.Concat(defaultAlbumFields, extendedAlbumFields, []AlbumField{AlbumArtwork})
+	defaultSavedAlbumFields = slices.Concat([]AlbumField{AlbumAddedAt}, defaultAlbumFields)
+	allSavedAlbumFields     = slices.Concat([]AlbumField{AlbumAddedAt}, allAlbumFields)
 )
 
 // SelectAlbumFields applies the family-wide default, widening, then override precedence.
@@ -44,7 +45,7 @@ func SelectAlbumFields(csv string, extended, includeArtwork bool) ([]AlbumField,
 	if includeArtwork {
 		fields = append(fields, AlbumArtwork)
 	}
-	return selectAlbumFields(csv, fields, allAlbumFields)
+	return selectFields(csv, fields, allAlbumFields, "album")
 }
 
 // SelectSavedAlbumFields applies saved-album list field precedence.
@@ -56,102 +57,39 @@ func SelectSavedAlbumFields(csv string, extended, includeArtwork bool) ([]AlbumF
 	if includeArtwork {
 		fields = append(fields, AlbumArtwork)
 	}
-	return selectAlbumFields(csv, fields, allSavedAlbumFields)
-}
-
-func selectAlbumFields(csv string, defaults, allowed []AlbumField) ([]AlbumField, error) {
-	if strings.TrimSpace(csv) == "" {
-		return defaults, nil
-	}
-	fields := make([]AlbumField, 0, len(defaults))
-	seen := map[AlbumField]bool{}
-	for _, raw := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		name := AlbumField(strings.ToUpper(trimmed))
-		if !containsAlbumField(allowed, name) {
-			return nil, fmt.Errorf("unknown album field %q; valid fields: %s", trimmed, albumFieldNames(allowed))
-		}
-		if !seen[name] {
-			fields = append(fields, name)
-			seen[name] = true
-		}
-	}
-	if len(fields) == 0 {
-		return defaults, nil
-	}
-	return fields, nil
+	return selectFields(csv, fields, allSavedAlbumFields, "album")
 }
 
 // RenderAlbums renders one pipe-delimited table, including the header for an empty page.
 func RenderAlbums(albums []client.Album, fields []AlbumField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, album := range albums {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			cells[index] = albumCell(album, field)
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(albums, fields, albumCell)
 }
 
 // RenderAlbumIDs renders one primary identifier per line without a header.
 func RenderAlbumIDs(albums []client.Album) string {
-	var rendered strings.Builder
-	for _, album := range albums {
-		rendered.WriteString(cell(album.ID))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderIDs(albums, func(album client.Album) string { return album.ID })
 }
 
 // RenderSavedAlbums renders saved albums with their library timestamps.
 func RenderSavedAlbums(items []client.SavedAlbum, fields []AlbumField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, item := range items {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			if field == AlbumAddedAt {
-				cells[index] = cell(item.AddedAt)
-			} else {
-				cells[index] = albumCell(item.Album, field)
-			}
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(items, fields, savedAlbumCell)
 }
 
 // RenderSavedAlbumIDs renders one saved album ID per line.
 func RenderSavedAlbumIDs(items []client.SavedAlbum) string {
-	albums := make([]client.Album, len(items))
-	for index, item := range items {
-		albums[index] = item.Album
+	return renderIDs(items, func(item client.SavedAlbum) string { return item.Album.ID })
+}
+
+func savedAlbumCell(item client.SavedAlbum, field AlbumField) string {
+	if field == AlbumAddedAt {
+		return cell(item.AddedAt)
 	}
-	return RenderAlbumIDs(albums)
+	return albumCell(item.Album, field)
 }
 
 func albumCell(album client.Album, field AlbumField) string {
+	//nolint:exhaustive // AlbumAddedAt is handled by savedAlbumCell.
 	switch field {
-	case AlbumAddedAt:
-		return "-"
 	case AlbumID:
 		return cell(album.ID)
 	case AlbumName:
@@ -181,23 +119,6 @@ func albumCell(album client.Album, field AlbumField) string {
 	}
 }
 
-func containsAlbumField(fields []AlbumField, field AlbumField) bool {
-	for _, candidate := range fields {
-		if candidate == field {
-			return true
-		}
-	}
-	return false
-}
-
-func albumFieldNames(fields []AlbumField) string {
-	values := make([]string, len(fields))
-	for index, field := range fields {
-		values[index] = string(field)
-	}
-	return strings.Join(values, ", ")
-}
-
 // ArtistField identifies one stable artist table column.
 type ArtistField string
 
@@ -213,7 +134,7 @@ const (
 var (
 	defaultArtistFields  = []ArtistField{ArtistID, ArtistName}
 	extendedArtistFields = []ArtistField{ArtistURI, ArtistURL}
-	allArtistFields      = append(append(append([]ArtistField(nil), defaultArtistFields...), extendedArtistFields...), ArtistArtwork)
+	allArtistFields      = slices.Concat(defaultArtistFields, extendedArtistFields, []ArtistField{ArtistArtwork})
 )
 
 // SelectArtistFields applies the family-wide default, widening, then override precedence.
@@ -225,60 +146,17 @@ func SelectArtistFields(csv string, extended, includeArtwork bool) ([]ArtistFiel
 	if includeArtwork {
 		fields = append(fields, ArtistArtwork)
 	}
-	if strings.TrimSpace(csv) == "" {
-		return fields, nil
-	}
-	defaults := fields
-	fields = nil
-	seen := map[ArtistField]bool{}
-	for _, raw := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		name := ArtistField(strings.ToUpper(trimmed))
-		if !validArtistField(name) {
-			return nil, fmt.Errorf("unknown artist field %q; valid fields: %s", trimmed, artistFieldNames())
-		}
-		if !seen[name] {
-			fields = append(fields, name)
-			seen[name] = true
-		}
-	}
-	if len(fields) == 0 {
-		return defaults, nil
-	}
-	return fields, nil
+	return selectFields(csv, fields, allArtistFields, "artist")
 }
 
 // RenderArtists renders one pipe-delimited table, including the header for an empty page.
 func RenderArtists(artists []client.Artist, fields []ArtistField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, artist := range artists {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			cells[index] = artistCell(artist, field)
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(artists, fields, artistCell)
 }
 
 // RenderArtistIDs renders one primary identifier per line without a header.
 func RenderArtistIDs(artists []client.Artist) string {
-	var rendered strings.Builder
-	for _, artist := range artists {
-		rendered.WriteString(cell(artist.ID))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderIDs(artists, func(artist client.Artist) string { return artist.ID })
 }
 
 func artistCell(artist client.Artist, field ArtistField) string {
@@ -352,23 +230,6 @@ func detailKey(field string) string {
 		}
 	}
 	return strings.Join(words, " ")
-}
-
-func validArtistField(field ArtistField) bool {
-	for _, candidate := range allArtistFields {
-		if candidate == field {
-			return true
-		}
-	}
-	return false
-}
-
-func artistFieldNames() string {
-	values := make([]string, len(allArtistFields))
-	for index, field := range allArtistFields {
-		values[index] = string(field)
-	}
-	return strings.Join(values, ", ")
 }
 
 func renderArtwork(images []client.Image) string {

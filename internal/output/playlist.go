@@ -70,32 +70,12 @@ func SelectPlaylistFields(csv string, extended, includeArtwork bool) ([]Playlist
 
 // RenderPlaylists renders one pipe-delimited table, including the header for an empty page.
 func RenderPlaylists(playlists []client.Playlist, fields []PlaylistField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, playlist := range playlists {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			cells[index] = playlistCell(playlist, field)
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(playlists, fields, playlistCell)
 }
 
 // RenderPlaylistIDs renders one primary identifier per line without a header.
 func RenderPlaylistIDs(playlists []client.Playlist) string {
-	var rendered strings.Builder
-	for _, playlist := range playlists {
-		rendered.WriteString(cell(playlist.ID))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderIDs(playlists, func(playlist client.Playlist) string { return playlist.ID })
 }
 
 // RenderPlaylist renders one playlist as an identity header and paired attributes.

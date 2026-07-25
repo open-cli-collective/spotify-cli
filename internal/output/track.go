@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,10 +35,10 @@ var (
 	defaultTrackFields      = []TrackField{TrackID, TrackName, TrackArtistIDs, TrackArtists, TrackAlbumID, TrackAlbum, TrackDuration}
 	defaultAlbumTrackFields = []TrackField{TrackID, TrackName, TrackArtistIDs, TrackArtists, TrackDuration}
 	extendedTrackFields     = []TrackField{TrackURI, TrackURL, TrackDiscNumber, TrackTrackNumber, TrackExplicit, TrackRestriction}
-	allTrackFields          = append(append(append([]TrackField(nil), defaultTrackFields...), extendedTrackFields...), TrackArtwork)
-	allAlbumTrackFields     = append(append([]TrackField(nil), defaultAlbumTrackFields...), extendedTrackFields...)
-	defaultSavedTrackFields = append([]TrackField{TrackAddedAt}, defaultTrackFields...)
-	allSavedTrackFields     = append([]TrackField{TrackAddedAt}, allTrackFields...)
+	allTrackFields          = slices.Concat(defaultTrackFields, extendedTrackFields, []TrackField{TrackArtwork})
+	allAlbumTrackFields     = slices.Concat(defaultAlbumTrackFields, extendedTrackFields)
+	defaultSavedTrackFields = slices.Concat([]TrackField{TrackAddedAt}, defaultTrackFields)
+	allSavedTrackFields     = slices.Concat([]TrackField{TrackAddedAt}, allTrackFields)
 )
 
 // SelectTrackFields applies the family-wide default, widening, then override precedence.
@@ -49,7 +50,7 @@ func SelectTrackFields(csv string, extended, artwork bool) ([]TrackField, error)
 	if artwork {
 		fields = append(fields, TrackArtwork)
 	}
-	return selectTrackFields(csv, fields, allTrackFields)
+	return selectFields(csv, fields, allTrackFields, "track")
 }
 
 // SelectSavedTrackFields applies saved-track list field precedence.
@@ -61,7 +62,7 @@ func SelectSavedTrackFields(csv string, extended, artwork bool) ([]TrackField, e
 	if artwork {
 		fields = append(fields, TrackArtwork)
 	}
-	return selectTrackFields(csv, fields, allSavedTrackFields)
+	return selectFields(csv, fields, allSavedTrackFields, "track")
 }
 
 // SelectAlbumTrackFields selects only fields present in simplified album-track responses.
@@ -70,96 +71,34 @@ func SelectAlbumTrackFields(csv string, extended bool) ([]TrackField, error) {
 	if extended {
 		fields = append(fields, extendedTrackFields...)
 	}
-	return selectTrackFields(csv, fields, allAlbumTrackFields)
-}
-
-func selectTrackFields(csv string, defaults, allowed []TrackField) ([]TrackField, error) {
-	if strings.TrimSpace(csv) == "" {
-		return defaults, nil
-	}
-	var fields []TrackField
-	seen := map[TrackField]bool{}
-	for _, raw := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		name := TrackField(strings.ToUpper(trimmed))
-		if !validTrackField(name, allowed) {
-			return nil, fmt.Errorf("unknown track field %q; valid fields: %s", trimmed, trackFieldNames(allowed))
-		}
-		if !seen[name] {
-			fields = append(fields, name)
-			seen[name] = true
-		}
-	}
-	if len(fields) == 0 {
-		return defaults, nil
-	}
-	return fields, nil
+	return selectFields(csv, fields, allAlbumTrackFields, "track")
 }
 
 // RenderTracks renders one pipe-delimited table, including the header for an empty page.
 func RenderTracks(tracks []client.Track, fields []TrackField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, track := range tracks {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			cells[index] = trackCell(track, field)
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(tracks, fields, trackCell)
 }
 
 // RenderTrackIDs renders one primary identifier per line without a header.
 func RenderTrackIDs(tracks []client.Track) string {
-	var rendered strings.Builder
-	for _, track := range tracks {
-		rendered.WriteString(cell(track.ID))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderIDs(tracks, func(track client.Track) string { return track.ID })
 }
 
 // RenderSavedTracks renders saved tracks with their library timestamps.
 func RenderSavedTracks(items []client.SavedTrack, fields []TrackField) string {
-	var rendered strings.Builder
-	headers := make([]string, len(fields))
-	for index, field := range fields {
-		headers[index] = string(field)
-	}
-	rendered.WriteString(strings.Join(headers, " | "))
-	rendered.WriteByte('\n')
-	for _, item := range items {
-		cells := make([]string, len(fields))
-		for index, field := range fields {
-			if field == TrackAddedAt {
-				cells[index] = cell(item.AddedAt)
-			} else {
-				cells[index] = trackCell(item.Track, field)
-			}
-		}
-		rendered.WriteString(strings.Join(cells, " | "))
-		rendered.WriteByte('\n')
-	}
-	return rendered.String()
+	return renderTable(items, fields, savedTrackCell)
 }
 
 // RenderSavedTrackIDs renders one saved track ID per line.
 func RenderSavedTrackIDs(items []client.SavedTrack) string {
-	tracks := make([]client.Track, len(items))
-	for index, item := range items {
-		tracks[index] = item.Track
+	return renderIDs(items, func(item client.SavedTrack) string { return item.Track.ID })
+}
+
+func savedTrackCell(item client.SavedTrack, field TrackField) string {
+	if field == TrackAddedAt {
+		return cell(item.AddedAt)
 	}
-	return RenderTrackIDs(tracks)
+	return trackCell(item.Track, field)
 }
 
 // RenderTrack renders one track as an identity header and paired attributes.
@@ -174,6 +113,7 @@ func RenderTrack(track client.Track, fields []TrackField) string {
 }
 
 func trackCell(track client.Track, field TrackField) string {
+	//nolint:exhaustive // TrackAddedAt is handled by savedTrackCell.
 	switch field {
 	case TrackID:
 		return cell(track.ID)
@@ -203,8 +143,6 @@ func trackCell(track client.Track, field TrackField) string {
 		return cell(track.Restrictions.Reason)
 	case TrackArtwork:
 		return renderArtwork(track.Album.Images)
-	case TrackAddedAt:
-		return "-"
 	default:
 		return "-"
 	}
@@ -254,21 +192,4 @@ func cell(value string) string {
 func sanitize(value string) string {
 	value = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(value)
 	return strings.ReplaceAll(value, " | ", " ")
-}
-
-func validTrackField(field TrackField, allowed []TrackField) bool {
-	for _, candidate := range allowed {
-		if candidate == field {
-			return true
-		}
-	}
-	return false
-}
-
-func trackFieldNames(allowed []TrackField) string {
-	values := make([]string, len(allowed))
-	for index, field := range allowed {
-		values[index] = string(field)
-	}
-	return strings.Join(values, ", ")
 }

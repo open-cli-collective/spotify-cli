@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
@@ -30,7 +31,6 @@ type Setup struct {
 // Dependencies contains the runtime effects used by init.
 type Dependencies struct {
 	Scope       statedir.Scope
-	Backend     *string
 	Interactive bool
 	Prompt      func(*Setup) error
 	Initializer Initializer
@@ -43,12 +43,7 @@ func New(dependencies Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "init",
 		Short: "Authorize Spotify and save configuration",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return exitcode.New(exitcode.Usage, errors.New("init takes no arguments"))
-			}
-			return nil
-		},
+		Args:  cmdutil.NoArgs("init"),
 		RunE: func(command *cobra.Command, _ []string) error {
 			return run(command, dependencies, Setup{
 				ClientID: clientID, RedirectURI: redirectURI, CredentialRef: credentialRef,
@@ -88,7 +83,10 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 	}
 	backendFlag := command.Flags().Lookup(credstore.BackendFlagName)
 	backendSet := backendFlag != nil && backendFlag.Changed
-	runtimeBackend := pointerValue(dependencies.Backend)
+	runtimeBackend := ""
+	if backendFlag != nil {
+		runtimeBackend = backendFlag.Value.String()
+	}
 	runtimeBackendSet := backendSet
 	interactive := dependencies.Interactive && !nonInteractive
 	if backendSet {
@@ -209,11 +207,4 @@ func classifyVerification(err error) error {
 	default:
 		return exitcode.New(exitcode.Upstream, err)
 	}
-}
-
-func pointerValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

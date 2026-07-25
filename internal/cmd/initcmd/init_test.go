@@ -380,7 +380,7 @@ func (harness *initHarness) envelope() token.Envelope {
 
 func (harness *initHarness) execute(args ...string) error {
 	command := New(Dependencies{
-		Scope: harness.scope, Backend: &harness.backend, Interactive: harness.interactive, Prompt: harness.prompt,
+		Scope: harness.scope, Interactive: harness.interactive, Prompt: harness.prompt,
 		Initializer: Initializer{
 			OpenStore: func(request credentials.OpenRequest) (CredentialStore, error) {
 				harness.requests = append(harness.requests, request)

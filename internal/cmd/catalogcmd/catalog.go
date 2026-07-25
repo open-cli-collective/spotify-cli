@@ -8,12 +8,10 @@ import (
 	"io"
 	"math"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/spf13/cobra"
 
-	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/client"
-	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/cmd/cmdutil"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/output"
 	"github.com/open-cli-collective/spotify-cli/internal/pagetoken"
@@ -38,7 +36,6 @@ type SessionOpener func(context.Context, string, bool) (Session, error)
 // Dependencies contains the authenticated effect used by catalog commands.
 type Dependencies struct {
 	OpenSession SessionOpener
-	Backend     *string
 }
 
 type options struct {
@@ -69,12 +66,7 @@ func New(deps Dependencies) []*cobra.Command {
 func newGroup(use, alias string, children ...*cobra.Command) *cobra.Command {
 	command := &cobra.Command{
 		Use: use, Aliases: []string{alias}, Short: "Read Spotify " + use,
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return exitcode.New(exitcode.Usage, errors.New(use+" takes no arguments"))
-			}
-			return nil
-		},
+		Args: cmdutil.NoArgs(use),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(children...)
@@ -83,7 +75,7 @@ func newGroup(use, alias string, children ...*cobra.Command) *cobra.Command {
 
 func relationshipGroup(use string, child *cobra.Command) *cobra.Command {
 	command := &cobra.Command{
-		Use: use, Short: "Traverse Spotify " + use, Args: noArgs(use),
+		Use: use, Short: "Traverse Spotify " + use, Args: cmdutil.NoArgs(use),
 		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
 	}
 	command.AddCommand(child)
@@ -104,14 +96,14 @@ func newTrack(deps Dependencies) *cobra.Command {
 				return exitcode.New(exitcode.Usage, err)
 			}
 		}
-		authenticated, err := openSession(command, deps)
+		authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = authenticated.Close() }()
 		track, err := authenticated.GetTrack(command.Context(), id)
 		if err != nil {
-			return classify(err)
+			return exitcode.New(cmdutil.Classify(err), err)
 		}
 		rendered := output.RenderTrack(track, fields)
 		if opts.id {
@@ -136,14 +128,14 @@ func newAlbum(deps Dependencies) *cobra.Command {
 				return exitcode.New(exitcode.Usage, err)
 			}
 		}
-		authenticated, err := openSession(command, deps)
+		authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = authenticated.Close() }()
 		album, err := authenticated.GetAlbum(command.Context(), id)
 		if err != nil {
-			return classify(err)
+			return exitcode.New(cmdutil.Classify(err), err)
 		}
 		rendered := output.RenderAlbum(album, fields)
 		if opts.id {
@@ -167,14 +159,14 @@ func newArtist(deps Dependencies) *cobra.Command {
 				return exitcode.New(exitcode.Usage, err)
 			}
 		}
-		authenticated, err := openSession(command, deps)
+		authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = authenticated.Close() }()
 		artist, err := authenticated.GetArtist(command.Context(), id)
 		if err != nil {
-			return classify(err)
+			return exitcode.New(cmdutil.Classify(err), err)
 		}
 		rendered := output.RenderArtist(artist, fields)
 		if opts.id {
@@ -206,14 +198,14 @@ func newAlbumTracks(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		authenticated, err := openSession(command, deps)
+		authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = authenticated.Close() }()
 		page, err := authenticated.ListAlbumTracks(command.Context(), id, opts.max, offset)
 		if err != nil {
-			return classify(err)
+			return exitcode.New(cmdutil.Classify(err), err)
 		}
 		rendered := output.RenderTracks(page.Items, fields)
 		if opts.id {
@@ -247,14 +239,14 @@ func newArtistAlbums(deps Dependencies) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		authenticated, err := openSession(command, deps)
+		authenticated, err := cmdutil.OpenSession(command, deps.OpenSession)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = authenticated.Close() }()
 		page, err := authenticated.ListArtistAlbums(command.Context(), id, opts.max, offset)
 		if err != nil {
-			return classify(err)
+			return exitcode.New(cmdutil.Classify(err), err)
 		}
 		rendered := output.RenderAlbums(page.Items, fields)
 		if opts.id {
@@ -269,12 +261,7 @@ func newArtistAlbums(deps Dependencies) *cobra.Command {
 func listCommand(parent, resource string, maxResults int, artwork bool, opts *listOptions, run func(*cobra.Command, string) error) *cobra.Command {
 	command := &cobra.Command{
 		Use: "list <spotify-id-uri-or-url>", Short: "List Spotify " + parent,
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(1)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(1, ""),
 		RunE: func(command *cobra.Command, args []string) error { return run(command, args[0]) },
 	}
 	flags := command.Flags()
@@ -300,12 +287,7 @@ func decodeTraversalToken(scope, value string, pageLimit int) (int, error) {
 func getCommand(resource string, opts *options, run func(*cobra.Command, string) error) *cobra.Command {
 	command := &cobra.Command{
 		Use: "get <spotify-id-uri-or-url>", Short: "Get one Spotify " + resource,
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.ExactArgs(1)(command, args); err != nil {
-				return exitcode.New(exitcode.Usage, err)
-			}
-			return nil
-		},
+		Args: cmdutil.ExactArgs(1, ""),
 		RunE: func(command *cobra.Command, args []string) error { return run(command, args[0]) },
 	}
 	flags := command.Flags()
@@ -314,36 +296,6 @@ func getCommand(resource string, opts *options, run func(*cobra.Command, string)
 	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent "+resource+" fields")
 	flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
 	return command
-}
-
-func openSession(command *cobra.Command, deps Dependencies) (Session, error) {
-	backendFlag := command.Flags().Lookup(credstore.BackendFlagName)
-	backendSet := backendFlag != nil && backendFlag.Changed
-	backend := ""
-	if deps.Backend != nil {
-		backend = *deps.Backend
-	}
-	if err := credentials.ValidateExplicitBackend(backend, backendSet); err != nil {
-		return nil, exitcode.New(exitcode.Usage, err)
-	}
-	if deps.OpenSession == nil {
-		return nil, exitcode.New(exitcode.Generic, errors.New("authenticated session is unavailable"))
-	}
-	authenticated, err := deps.OpenSession(command.Context(), backend, backendSet)
-	if err != nil {
-		return nil, exitcode.New(exitcode.Config, err)
-	}
-	return authenticated, nil
-}
-
-func classify(err error) error {
-	switch {
-	case errors.Is(err, auth.ErrInvalidGrant), errors.Is(err, auth.ErrPersistRefresh),
-		errors.Is(err, client.ErrUnauthorized), errors.Is(err, client.ErrForbidden):
-		return exitcode.New(exitcode.Config, err)
-	default:
-		return exitcode.New(exitcode.Upstream, err)
-	}
 }
 
 func writeOutput(command *cobra.Command, rendered string) error {
@@ -363,13 +315,4 @@ func writeListOutput(command *cobra.Command, rendered, scope string, offset, lim
 		}
 	}
 	return nil
-}
-
-func noArgs(use string) func(*cobra.Command, []string) error {
-	return func(_ *cobra.Command, args []string) error {
-		if len(args) != 0 {
-			return exitcode.New(exitcode.Usage, errors.New(use+" takes no arguments"))
-		}
-		return nil
-	}
 }

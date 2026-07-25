@@ -294,8 +294,8 @@ func (harness *meHarness) executeTo(stdout io.Writer, args ...string) error {
 		OpenSession: func(ctx context.Context, backend string, backendSet bool) (Session, error) {
 			return opener.Open(ctx, backend, backendSet)
 		},
-		Backend: &harness.backend,
 	})
+	command.Flags().StringVar(&harness.backend, credstore.BackendFlagName, "", "")
 	command.SetOut(stdout)
 	command.SetErr(&bytes.Buffer{})
 	command.SilenceUsage = true

@@ -135,7 +135,7 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 		},
 	})
 	if err != nil {
-		return classifyInitialization(err)
+		return err
 	}
 	if result.Verified {
 		if _, err := fmt.Fprintf(command.ErrOrStderr(), "Authenticated as %s.\n", result.User.AccountID); err != nil {
@@ -146,24 +146,6 @@ func run(command *cobra.Command, dependencies Dependencies, flags Setup, nonInte
 		return exitcode.New(exitcode.Generic, errors.New("writing setup confirmation failed"))
 	}
 	return nil
-}
-
-func classifyInitialization(err error) error {
-	var failure *initializationFailure
-	if !errors.As(err, &failure) {
-		return exitcode.New(exitcode.Generic, err)
-	}
-	switch failure.kind {
-	case failureGeneric:
-		return exitcode.New(exitcode.Generic, failure.err)
-	case failureConfig:
-		return exitcode.New(exitcode.Config, failure.err)
-	case failureAuthorization:
-		return classifyAuthorization(failure.err)
-	case failureVerification:
-		return classifyVerification(failure.err)
-	}
-	return exitcode.New(exitcode.Generic, failure.err)
 }
 
 func classifyAuthorization(err error) error {

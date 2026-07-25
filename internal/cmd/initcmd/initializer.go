@@ -12,6 +12,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
@@ -53,74 +54,53 @@ type InitializeResult struct {
 	Verified bool
 }
 
-type failureKind uint8
-
-const (
-	failureGeneric failureKind = iota
-	failureConfig
-	failureAuthorization
-	failureVerification
-)
-
-type initializationFailure struct {
-	kind failureKind
-	err  error
-}
-
-func (failure *initializationFailure) Error() string { return failure.err.Error() }
-func (failure *initializationFailure) Unwrap() error { return failure.err }
-
-func failInitialization(kind failureKind, err error) error {
-	return &initializationFailure{kind: kind, err: err}
-}
-
 // Initialize authorizes, verifies, and atomically persists one Spotify setup.
 func (initializer Initializer) Initialize(ctx context.Context, options InitializeOptions) (InitializeResult, error) {
 	if initializer.OpenStore == nil {
-		return InitializeResult{}, failInitialization(failureGeneric, errors.New("credential store opener is unavailable"))
+		return InitializeResult{}, exitcode.New(exitcode.Generic, errors.New("credential store opener is unavailable"))
 	}
 	if initializer.SaveConfig == nil {
-		return InitializeResult{}, failInitialization(failureConfig, errors.New("configuration saver is unavailable"))
+		return InitializeResult{}, exitcode.New(exitcode.Config, errors.New("configuration saver is unavailable"))
 	}
 	store, err := initializer.OpenStore(credentials.OpenRequest{
 		Config: options.Config, Backend: options.Backend, BackendSet: options.BackendSet,
 	})
 	if err != nil {
-		return InitializeResult{}, failInitialization(failureConfig, errors.New("opening credential store failed"))
+		return InitializeResult{}, exitcode.New(exitcode.Config, errors.New("opening credential store failed"))
 	}
 	defer func() { _ = store.Close() }()
 
 	present, err := store.Exists(options.Profile, credentials.OAuthTokenKey)
 	if err != nil {
-		return InitializeResult{}, failInitialization(failureConfig, errors.New("checking existing Spotify authorization failed"))
+		return InitializeResult{}, exitcode.New(exitcode.Config, errors.New("checking existing Spotify authorization failed"))
 	}
 	var previous string
 	if present {
 		if !options.Overwrite {
-			return InitializeResult{}, failInitialization(failureGeneric, fmt.Errorf("%w at %s; use --overwrite or sptfy config clear", credstore.ErrExists, options.Config.CredentialRef))
+			return InitializeResult{}, exitcode.New(exitcode.Generic, fmt.Errorf("%w at %s; use --overwrite or sptfy config clear", credstore.ErrExists, options.Config.CredentialRef))
 		}
 		previous, err = store.Get(options.Profile, credentials.OAuthTokenKey)
 		if err != nil {
-			return InitializeResult{}, failInitialization(failureConfig, errors.New("reading existing Spotify authorization for rollback failed"))
+			return InitializeResult{}, exitcode.New(exitcode.Config, errors.New("reading existing Spotify authorization for rollback failed"))
 		}
 	}
 
 	if initializer.Authorize == nil {
-		return InitializeResult{}, failInitialization(failureGeneric, errors.New("spotify authorizer is unavailable"))
+		return InitializeResult{}, exitcode.New(exitcode.Generic, errors.New("spotify authorizer is unavailable"))
 	}
 	envelope, err := initializer.Authorize(ctx, options.Authorization)
 	if err != nil {
-		return InitializeResult{}, failInitialization(failureAuthorization, err)
+		return InitializeResult{}, classifyAuthorization(err)
 	}
 
 	result := InitializeResult{Verified: options.Verify}
 	if options.Verify {
 		if initializer.Verify == nil {
-			return InitializeResult{}, failInitialization(failureGeneric, errors.New("spotify verifier is unavailable"))
+			return InitializeResult{}, exitcode.New(exitcode.Generic, errors.New("spotify verifier is unavailable"))
 		}
 		result.User, err = initializer.Verify(ctx, options.Config, envelope)
 		if err != nil {
-			return InitializeResult{}, failInitialization(failureVerification, err)
+			return InitializeResult{}, classifyVerification(err)
 		}
 	}
 
@@ -130,21 +110,21 @@ func (initializer Initializer) Initialize(ctx context.Context, options Initializ
 	}
 	encoded, err := token.Encode(envelope, now)
 	if err != nil {
-		return InitializeResult{}, failInitialization(failureConfig, err)
+		return InitializeResult{}, exitcode.New(exitcode.Config, err)
 	}
 	setOptions := []credstore.SetOpt(nil)
 	if options.Overwrite {
 		setOptions = append(setOptions, credstore.WithOverwrite())
 	}
 	if err := store.Set(options.Profile, credentials.OAuthTokenKey, string(encoded), setOptions...); err != nil {
-		return InitializeResult{}, failInitialization(failureConfig, redactStoreError(err, previous, string(encoded), envelope))
+		return InitializeResult{}, exitcode.New(exitcode.Config, redactStoreError(err, previous, string(encoded), envelope))
 	}
 	if err := initializer.SaveConfig(options.Config); err != nil {
 		rollbackErr := rollbackCredential(store, options.Profile, previous, present)
 		if rollbackErr != nil {
 			rollbackErr = redactStoreError(rollbackErr, previous, string(encoded), envelope)
 		}
-		return InitializeResult{}, failInitialization(failureConfig, errors.Join(errors.New("saving configuration failed"), rollbackErr))
+		return InitializeResult{}, exitcode.New(exitcode.Config, errors.Join(errors.New("saving configuration failed"), rollbackErr))
 	}
 	return result, nil
 }

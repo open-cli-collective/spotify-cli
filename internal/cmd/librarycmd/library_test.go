@@ -141,16 +141,19 @@ func TestCheckReferenceFormsDeduplicateInFirstSeenOrder(t *testing.T) {
 	want := "REFERENCE | ID | SAVED\n" +
 		"spotify:track:" + trackID + " | " + trackID + " | true\n" +
 		"https://open.spotify.com/track/" + second + " | " + second + " | false\n"
-	if err != nil || stdout != want || stderr != "" || opens != 1 || len(session.calls) != 1 {
+	wantCall := "check:[" + trackID + " " + second + "]"
+	if err != nil || stdout != want || stderr != "" || opens != 1 || fmt.Sprint(session.calls) != "["+wantCall+"]" {
 		t.Fatalf("stdout=%q stderr=%q opens=%d calls=%v error=%v", stdout, stderr, opens, session.calls, err)
 	}
 }
 
 func TestBatchValidationHappensBeforeSession(t *testing.T) {
 	for _, verb := range []string{"check", "add", "remove"} {
-		stdout, stderr, opens, err := execute(&fakeSession{}, "library", "tracks", verb, trackID, "bad")
-		if exitcode.Code(err) != exitcode.Usage || stdout != "" || stderr != "" || opens != 0 {
-			t.Fatalf("verb=%s stdout=%q stderr=%q opens=%d error=%v", verb, stdout, stderr, opens, err)
+		for _, args := range [][]string{{trackID, "bad"}, {"spotify:album:" + albumID}} {
+			stdout, stderr, opens, err := execute(&fakeSession{}, append([]string{"library", "tracks", verb}, args...)...)
+			if exitcode.Code(err) != exitcode.Usage || stdout != "" || stderr != "" || opens != 0 {
+				t.Fatalf("verb=%s args=%v stdout=%q stderr=%q opens=%d error=%v", verb, args, stdout, stderr, opens, err)
+			}
 		}
 	}
 }

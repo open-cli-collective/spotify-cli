@@ -257,6 +257,24 @@ func TestSavedTrackOperationsRejectInvalidInputBeforeRequest(t *testing.T) {
 			t.Fatalf("calls=%d error=%v", calls, err)
 		}
 	}
+	for _, kind := range []spotifyref.Kind{spotifyref.Artist, ""} {
+		for _, call := range []func() error{
+			func() error {
+				_, err := spotify.CheckSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+				return err
+			},
+			func() error {
+				return spotify.SaveSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+			},
+			func() error {
+				return spotify.RemoveSavedItems(context.Background(), kind, []string{"0123456789ABCDEFGHIJKL"})
+			},
+		} {
+			if err := call(); !errors.Is(err, ErrInvalidResponse) || calls != 0 {
+				t.Fatalf("kind=%q calls=%d error=%v", kind, calls, err)
+			}
+		}
+	}
 }
 
 func TestSavedAlbumListUsesFixedPathAndValidatesPage(t *testing.T) {

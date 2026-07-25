@@ -32,7 +32,7 @@ live-smoke:
 
 test-live-smoke:
 	./scripts/live-smoke-test.sh
-	go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^$$'
+	go test -tags=keyring_nopassage,spotify_live ./internal/client ./internal/credentials -run '^$$'
 
 lint:
 	golangci-lint run

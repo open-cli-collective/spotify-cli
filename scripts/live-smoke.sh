@@ -270,7 +270,7 @@ fi
 playlist_items_ids=$("$SPTFY" --backend file playlists items list "$SPOTIFY_CLI_LIVE_PLAYLIST_ID" --id --max 3)
 [[ $playlist_items_ids == "$playlist_prefix_ids" ]] || { printf '%s\n' 'playlist item ID-only prefix did not match normal output' >&2; exit 1; }
 if [[ $live_dry != 1 ]]; then
-  go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^TestPlaylistDuplicateURIRemovalContract$' -count=1
+  go test -tags=keyring_nopassage,spotify_live ./internal/client -run '^TestPlaylistDuplicateURIRemovalContract$' -count=1
 fi
 
 playlist_restore_needed=1
@@ -354,7 +354,7 @@ artist_albums_out=$("$SPTFY" --backend file artists albums list "https://open.sp
 
 "$SPTFY" --backend file init --non-interactive --client-id "$SPOTIFY_CLIENT_ID" --overwrite
 if [[ $live_dry != 1 ]]; then
-  go test -tags=keyring_nopassage,spotify_live ./internal/livesmoke -run '^TestExpireCredential$' -count=1
+  go test -tags=keyring_nopassage,spotify_live ./internal/credentials -run '^TestExpireCredential$' -count=1
 fi
 grep -q '^account_id' < <("$SPTFY" --backend file me)
 

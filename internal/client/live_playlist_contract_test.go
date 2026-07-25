@@ -1,6 +1,6 @@
 //go:build spotify_live
 
-package livesmoke
+package client_test
 
 import (
 	"context"

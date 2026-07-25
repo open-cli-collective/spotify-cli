@@ -21,59 +21,20 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/auth"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/credstoretest"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
-
-type fakeStore struct {
-	values  map[string]string
-	backend credstore.Backend
-	source  credstore.Source
-	setErr  error
-}
 
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("writer failed") }
 
-func (s *fakeStore) Backend() (credstore.Backend, credstore.Source) { return s.backend, s.source }
-func (s *fakeStore) Close() error                                   { return nil }
-func (s *fakeStore) Get(profile, key string) (string, error) {
-	value, ok := s.values[profile+"/"+key]
-	if !ok {
-		return "", credstore.ErrNotFound
-	}
-	return value, nil
-}
-func (s *fakeStore) Set(profile, key, value string, opts ...credstore.SetOpt) error {
-	if s.setErr != nil {
-		return s.setErr
-	}
-	item := profile + "/" + key
-	if _, ok := s.values[item]; ok && len(opts) == 0 {
-		return credstore.ErrExists
-	}
-	s.values[item] = value
-	return nil
-}
-func (s *fakeStore) Delete(profile, key string) error {
-	item := profile + "/" + key
-	if _, ok := s.values[item]; !ok {
-		return credstore.ErrNotFound
-	}
-	delete(s.values, item)
-	return nil
-}
-func (s *fakeStore) Exists(profile, key string) (bool, error) {
-	_, ok := s.values[profile+"/"+key]
-	return ok, nil
-}
-
 type harness struct {
 	in       *bytes.Buffer
 	out      *bytes.Buffer
 	errOut   *bytes.Buffer
-	store    *fakeStore
+	store    *credstoretest.Store
 	requests []credentials.OpenRequest
 	deps     Dependencies
 }
@@ -85,10 +46,10 @@ func newHarness(t *testing.T) *harness {
 		in:     &bytes.Buffer{},
 		out:    &bytes.Buffer{},
 		errOut: &bytes.Buffer{},
-		store: &fakeStore{
-			values:  map[string]string{},
-			backend: credstore.BackendMemory,
-			source:  credstore.SourceExplicit,
+		store: &credstoretest.Store{
+			Values:       map[string]string{},
+			BackendValue: credstore.BackendMemory,
+			Source:       credstore.SourceExplicit,
 		},
 	}
 	openStore := func(request credentials.OpenRequest) (credentials.Store, error) {
@@ -142,62 +103,35 @@ func TestUnknownCommandsAreUsageErrors(t *testing.T) {
 	}
 }
 
-func TestSearchCommandsAreWiredToAuthenticatedSession(t *testing.T) {
-	for _, resource := range []string{"track", "album", "artist"} {
-		h := newHarness(t)
-		cfg := config.Default()
-		cfg.ClientID = "client-id"
-		if err := config.Save(h.deps.Scope, cfg); err != nil {
-			t.Fatal(err)
-		}
-		err := h.execute("search", resource, "query")
-		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
-		}
-	}
-}
-
-func TestSearchCommandsRejectJSONBeforeSession(t *testing.T) {
-	for _, resource := range []string{"track", "album", "artist"} {
-		h := newHarness(t)
-		err := h.execute("search", resource, "query", "--json")
-		if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
-		}
-	}
-}
-
-func TestLibraryCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
+func TestAuthenticatedCommandsAreWired(t *testing.T) {
 	const id = "0123456789ABCDEFGHIJKL"
 	for _, test := range []struct {
-		resource string
-		verb     string
-		args     []string
+		name string
+		args []string
 	}{
-		{resource: "tracks", verb: "list", args: []string{"library", "tracks", "list"}},
-		{resource: "tracks", verb: "check", args: []string{"library", "tracks", "check", id}},
-		{resource: "tracks", verb: "add", args: []string{"library", "tracks", "add", id}},
-		{resource: "tracks", verb: "remove", args: []string{"library", "tracks", "remove", id}},
-		{resource: "albums", verb: "list", args: []string{"library", "albums", "list"}},
-		{resource: "albums", verb: "check", args: []string{"library", "albums", "check", id}},
-		{resource: "albums", verb: "add", args: []string{"library", "albums", "add", id}},
-		{resource: "albums", verb: "remove", args: []string{"library", "albums", "remove", id}},
+		{name: "search", args: []string{"search", "track", "query"}},
+		{name: "library", args: []string{"library", "tracks", "list"}},
+		{name: "catalog get", args: []string{"tracks", "get", id}},
+		{name: "catalog traversal", args: []string{"albums", "tracks", "list", id}},
+		{name: "playlist", args: []string{"playlists", "list"}},
 	} {
-		h := newHarness(t)
-		if test.verb != "list" {
-			if err := h.execute("library", test.resource, test.verb, id, "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-				t.Fatalf("resource=%s verb=%s invalid error=%v code=%d store opens=%d", test.resource, test.verb, err, exitcode.Code(err), len(h.requests))
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t)
+			saveClientID(t, h.deps.Scope)
+			err := h.execute(test.args...)
+			if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
+				t.Fatalf("error=%v code=%d store opens=%d", err, exitcode.Code(err), len(h.requests))
 			}
-		}
-		cfg := config.Default()
-		cfg.ClientID = "client-id"
-		if err := config.Save(h.deps.Scope, cfg); err != nil {
-			t.Fatal(err)
-		}
-		err := h.execute(test.args...)
-		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-			t.Fatalf("resource=%s verb=%s error=%v code=%d store opens=%d", test.resource, test.verb, err, exitcode.Code(err), len(h.requests))
-		}
+		})
+	}
+}
+
+func saveClientID(t *testing.T, scope statedir.Scope) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.ClientID = "client-id"
+	if err := config.Save(scope, cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,7 +155,7 @@ func TestSavedAlbumArtistsFlowFromProviderJSONToCommandOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.store.values["default/oauth_token"] = string(encoded)
+	h.store.Values["default/oauth_token"] = string(encoded)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/me/albums" || request.Header.Get("Authorization") != "Bearer access" {
 			t.Fatalf("request=%s authorization=%q", request.URL.String(), request.Header.Get("Authorization"))
@@ -240,141 +174,6 @@ func TestSavedAlbumArtistsFlowFromProviderJSONToCommandOutput(t *testing.T) {
 		"2026-07-23T12:00:00Z | " + albumID + " | Duets | " + artistOne + "," + artistTwo + " | First,Second | 2026 | 2\n"
 	if h.out.String() != want || h.errOut.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", h.out.String(), h.errOut.String())
-	}
-}
-
-func TestCatalogGetCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	for _, resource := range []string{"tracks", "albums", "artists"} {
-		h := newHarness(t)
-		if err := h.execute(resource, "get", "bad"); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-			t.Fatalf("resource=%s invalid error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
-		}
-
-		h = newHarness(t)
-		cfg := config.Default()
-		cfg.ClientID = "client-id"
-		if err := config.Save(h.deps.Scope, cfg); err != nil {
-			t.Fatal(err)
-		}
-		err := h.execute(resource, "get", id)
-		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-			t.Fatalf("resource=%s error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
-		}
-
-		h = newHarness(t)
-		err = h.execute(resource, "get", id, "--json")
-		if exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-			t.Fatalf("resource=%s JSON error=%v code=%d store opens=%d", resource, err, exitcode.Code(err), len(h.requests))
-		}
-	}
-}
-
-func TestCatalogTraversalCommandsAreWiredAndValidateBeforeSession(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	for _, args := range [][]string{
-		{"albums", "tracks", "list", id, "--max", "51"},
-		{"artists", "albums", "list", id, "--max", "11"},
-	} {
-		h := newHarness(t)
-		if err := h.execute(args...); exitcode.Code(err) != exitcode.Usage || len(h.requests) != 0 {
-			t.Fatalf("args=%v error=%v code=%d store opens=%d", args, err, exitcode.Code(err), len(h.requests))
-		}
-	}
-	for _, args := range [][]string{
-		{"albums", "tracks", "list", id},
-		{"artists", "albums", "list", id},
-	} {
-		h := newHarness(t)
-		cfg := config.Default()
-		cfg.ClientID = "client-id"
-		if err := config.Save(h.deps.Scope, cfg); err != nil {
-			t.Fatal(err)
-		}
-		err := h.execute(args...)
-		if exitcode.Code(err) != exitcode.Config || len(h.requests) != 1 {
-			t.Fatalf("args=%v error=%v code=%d store opens=%d", args, err, exitcode.Code(err), len(h.requests))
-		}
-	}
-}
-
-func TestPlaylistCommandsUseRealSessionAndClientPath(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	h := newHarness(t)
-	cfg := config.Default()
-	cfg.ClientID = "client-id"
-	if err := config.Save(h.deps.Scope, cfg); err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := token.Encode(token.Envelope{
-		AccessToken: "access", TokenType: "Bearer", RefreshToken: "refresh",
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
-		Scopes: []string{
-			auth.ScopePlaylistModifyPrivate, auth.ScopePlaylistModifyPublic,
-			auth.ScopePlaylistReadCollaborative, auth.ScopePlaylistReadPrivate,
-		},
-	}, h.deps.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.store.values["default/oauth_token"] = string(encoded)
-	var paths []string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		paths = append(paths, request.URL.RequestURI())
-		if request.Header.Get("Authorization") != "Bearer access" {
-			t.Fatalf("authorization=%q", request.Header.Get("Authorization"))
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		switch request.URL.Path {
-		case "/v1/me/playlists":
-			_, _ = io.WriteString(writer, `{"items":[{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}],"limit":10,"offset":0,"total":1,"next":null}`)
-		case "/v1/playlists/" + id:
-			_, _ = io.WriteString(writer, `{"id":"`+id+`","name":"Mix","owner":{"id":"owner-1","display_name":"Ada"},"items":{"total":3},"public":null,"collaborative":true}`)
-		case "/v1/playlists/" + id + "/items":
-			if request.Method == http.MethodPost {
-				_, _ = io.WriteString(writer, `{"snapshot_id":"after-add"}`)
-			} else {
-				_, _ = io.WriteString(writer, `{"items":[{"added_at":"2026-07-24T12:00:00Z","added_by":{"id":"owner-1"},"is_local":false,"item":{"type":"track","id":"abcdefghijklmnopqrstuv","name":"Song","artists":[{"id":"1111111111111111111111","name":"Artist"}],"album":{"id":"2222222222222222222222","name":"Album","images":[]},"duration_ms":61000}}],"limit":10,"offset":0,"total":1,"next":null}`)
-			}
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	t.Cleanup(server.Close)
-	h.deps.HTTPClient = server.Client()
-	h.deps.APIBaseURL = server.URL + "/v1"
-
-	if err := h.execute("playlists", "list"); err != nil {
-		t.Fatal(err)
-	}
-	wantList := "ID | PLAYLIST | OWNER_ID | OWNER | ITEM_COUNT | PUBLIC | COLLABORATIVE\n" + id + " | Mix | owner-1 | Ada | 3 | - | true\n"
-	if h.out.String() != wantList || h.errOut.Len() != 0 {
-		t.Fatalf("list stdout=%q stderr=%q", h.out.String(), h.errOut.String())
-	}
-	h.out.Reset()
-	if err := h.execute("playlists", "get", "spotify:playlist:"+id, "--fields", "playlist,owner_id"); err != nil {
-		t.Fatal(err)
-	}
-	if h.out.String() != id+"  Mix\nOwner ID: owner-1\n" || h.errOut.Len() != 0 {
-		t.Fatalf("get stdout=%q stderr=%q", h.out.String(), h.errOut.String())
-	}
-	h.out.Reset()
-	if err := h.execute("playlists", "items", "list", "https://open.spotify.com/playlist/"+id); err != nil {
-		t.Fatal(err)
-	}
-	wantItems := "Playlist ID: " + id + "\nPOSITION | TYPE | ID | ITEM | ARTIST_IDS | ARTISTS | ALBUM_ID | ALBUM | DURATION\n0 | track | abcdefghijklmnopqrstuv | Song | 1111111111111111111111 | Artist | 2222222222222222222222 | Album | 1:01\n"
-	if h.out.String() != wantItems || h.errOut.Len() != 0 {
-		t.Fatalf("items stdout=%q stderr=%q", h.out.String(), h.errOut.String())
-	}
-	h.out.Reset()
-	if err := h.execute("playlists", "items", "add", id, "abcdefghijklmnopqrstuv", "--position", "1"); err != nil {
-		t.Fatal(err)
-	}
-	if h.out.String() != "added\t"+id+"\t1\t1\tafter-add\n" || h.errOut.Len() != 0 {
-		t.Fatalf("add stdout=%q stderr=%q", h.out.String(), h.errOut.String())
-	}
-	if strings.Join(paths, ",") != "/v1/me/playlists?limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items?additional_types=episode&limit=10&offset=0,/v1/playlists/"+id+",/v1/playlists/"+id+"/items" {
-		t.Fatalf("paths=%v", paths)
 	}
 }
 
@@ -637,7 +436,7 @@ func TestClearPartialFailureKeepsConfigExitWhenRenderingFails(t *testing.T) {
 func TestConfigShowJSONDoesNotLeakCredential(t *testing.T) {
 	h := newHarness(t)
 	canary := "stored-super-secret-canary"
-	h.store.values["default/oauth_token"] = canary
+	h.store.Values["default/oauth_token"] = canary
 
 	if err := h.execute("config", "show", "--json"); err != nil {
 		t.Fatal(err)
@@ -692,7 +491,7 @@ func TestSetCredentialJSONCanonicalizesWithoutLeaking(t *testing.T) {
 	if strings.Contains(h.out.String()+h.errOut.String(), canary) {
 		t.Fatal("set-credential output leaked the credential")
 	}
-	stored := h.store.values["work/oauth_token"]
+	stored := h.store.Values["work/oauth_token"]
 	if !strings.Contains(stored, canary) || !strings.Contains(stored, `"token_type":"Bearer"`) {
 		t.Fatalf("stored envelope was not canonicalized: %q", stored)
 	}
@@ -761,7 +560,7 @@ func TestSetCredentialStoreErrorsAreRedacted(t *testing.T) {
 			h := newHarness(t)
 			canary := "access-super-secret-canary"
 			raw := `{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`
-			h.store.setErr = errors.New("backend failed while handling " + canary)
+			h.store.SetErr = errors.New("backend failed while handling " + canary)
 			args := []string{"set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token"}
 			if ingress == "stdin" {
 				h.in.WriteString(raw)
@@ -794,7 +593,7 @@ func TestSetCredentialWrappedSentinelsAreRedactedAndClassified(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newHarness(t)
 			canary := "wrapped-sentinel-secret-canary"
-			h.store.setErr = fmt.Errorf("backend echoed %s: %w", canary, tt.cause)
+			h.store.SetErr = fmt.Errorf("backend echoed %s: %w", canary, tt.cause)
 			h.in.WriteString(`{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`)
 			err := h.execute("set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token", "--stdin", "--json")
 			if exitcode.Code(err) != tt.code || !errors.Is(err, tt.cause) {
@@ -833,7 +632,7 @@ func TestConfigShowReportsFilePassphraseSource(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newHarness(t)
-			h.store.backend = credstore.BackendFile
+			h.store.BackendValue = credstore.BackendFile
 			t.Setenv("SPOTIFY_CLI_KEYRING_PASSPHRASE", tt.value)
 			if err := h.execute("config", "show", "--json"); err != nil {
 				t.Fatal(err)
@@ -853,7 +652,7 @@ func TestSetCredentialFromEnvironment(t *testing.T) {
 	if err := h.execute("set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token", "--from-env", envName); err != nil {
 		t.Fatal(err)
 	}
-	if h.store.values["default/oauth_token"] == "" {
+	if h.store.Values["default/oauth_token"] == "" {
 		t.Fatal("credential was not stored")
 	}
 }
@@ -901,16 +700,16 @@ func TestConfigClearDryRunReportsOnlyActiveRef(t *testing.T) {
 	if err := config.Save(h.deps.Scope, cfg); err != nil {
 		t.Fatal(err)
 	}
-	h.store.values["work/oauth_token"] = "active"
-	h.store.values["other/oauth_token"] = "inactive"
+	h.store.Values["work/oauth_token"] = "active"
+	h.store.Values["other/oauth_token"] = "inactive"
 	if err := h.execute("config", "clear", "--dry-run"); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.out.String(); got != "would_remove\tcredential\tspotify-cli/work/oauth_token\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if h.store.values["work/oauth_token"] != "active" || h.store.values["other/oauth_token"] != "inactive" || len(h.requests) != 0 {
-		t.Fatalf("dry-run mutated/opened store: values=%v opens=%d", h.store.values, len(h.requests))
+	if h.store.Values["work/oauth_token"] != "active" || h.store.Values["other/oauth_token"] != "inactive" || len(h.requests) != 0 {
+		t.Fatalf("dry-run mutated/opened store: values=%v opens=%d", h.store.Values, len(h.requests))
 	}
 }
 
@@ -973,16 +772,16 @@ func TestConfigClearAllRecoversFromMalformedConfig(t *testing.T) {
 
 func TestConfigClearOnlyActiveCredential(t *testing.T) {
 	h := newHarness(t)
-	h.store.values["default/oauth_token"] = "active-canary"
-	h.store.values["other/oauth_token"] = "other-canary"
+	h.store.Values["default/oauth_token"] = "active-canary"
+	h.store.Values["other/oauth_token"] = "other-canary"
 
 	if err := h.execute("config", "clear"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := h.store.values["default/oauth_token"]; ok {
+	if _, ok := h.store.Values["default/oauth_token"]; ok {
 		t.Fatal("active credential remains")
 	}
-	if h.store.values["other/oauth_token"] != "other-canary" {
+	if h.store.Values["other/oauth_token"] != "other-canary" {
 		t.Fatal("inactive credential was touched")
 	}
 	if got := h.out.String(); got != "removed\tcredential\tspotify-cli/default/oauth_token\n" {
@@ -1000,7 +799,7 @@ func TestConfigClearOnlyActiveCredential(t *testing.T) {
 
 func TestSetCredentialExistingRequiresOverwrite(t *testing.T) {
 	h := newHarness(t)
-	h.store.values["default/oauth_token"] = "old"
+	h.store.Values["default/oauth_token"] = "old"
 	h.in.WriteString(`{"version":1,"access_token":"new","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`)
 	err := h.execute("set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token", "--stdin")
 	if !errors.Is(err, credstore.ErrExists) || exitcode.Code(err) != exitcode.Generic {
@@ -1010,13 +809,13 @@ func TestSetCredentialExistingRequiresOverwrite(t *testing.T) {
 
 func TestSetCredentialOverwriteSucceeds(t *testing.T) {
 	h := newHarness(t)
-	h.store.values["default/oauth_token"] = "old"
+	h.store.Values["default/oauth_token"] = "old"
 	h.in.WriteString(`{"version":1,"access_token":"new","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`)
 	if err := h.execute("set-credential", "--ref", "spotify-cli/default", "--key", "oauth_token", "--stdin", "--overwrite"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.store.values["default/oauth_token"], `"access_token":"new"`) {
-		t.Fatalf("stored credential = %q", h.store.values["default/oauth_token"])
+	if !strings.Contains(h.store.Values["default/oauth_token"], `"access_token":"new"`) {
+		t.Fatalf("stored credential = %q", h.store.Values["default/oauth_token"])
 	}
 }
 

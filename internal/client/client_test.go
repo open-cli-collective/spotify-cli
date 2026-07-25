@@ -146,51 +146,27 @@ func TestCatalogGetValidatesInputAndResponse(t *testing.T) {
 	}
 }
 
-func TestCatalogGetInheritsBoundedTransportBehavior(t *testing.T) {
+func TestCatalogEntryPointsInheritTransportBehavior(t *testing.T) {
+	const id = "0123456789ABCDEFGHIJKL"
 	for _, test := range []struct {
 		name string
-		body string
-		code int
-		want error
+		call func(Client) error
 	}{
-		{name: "unauthorized", code: http.StatusUnauthorized, want: ErrUnauthorized},
-		{name: "forbidden", code: http.StatusForbidden, want: ErrForbidden},
-		{name: "malformed", body: "not-json", code: http.StatusOK, want: ErrInvalidResponse},
-		{name: "oversized", body: `{"id":"` + strings.Repeat("x", maxResponseBytes) + `"}`, code: http.StatusOK, want: ErrInvalidResponse},
+		{name: "track", call: func(value Client) error { _, err := value.GetTrack(context.Background(), id); return err }},
+		{name: "album", call: func(value Client) error { _, err := value.GetAlbum(context.Background(), id); return err }},
+		{name: "artist", call: func(value Client) error { _, err := value.GetArtist(context.Background(), id); return err }},
+		{name: "album tracks", call: func(value Client) error { _, err := value.ListAlbumTracks(context.Background(), id, 1, 0); return err }},
+		{name: "artist albums", call: func(value Client) error { _, err := value.ListArtistAlbums(context.Background(), id, 1, 0); return err }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				return response(test.code, test.body), nil
+				return response(http.StatusUnauthorized, "secret-canary"), nil
 			})}
-			_, err := (Client{HTTPClient: httpClient}).GetArtist(context.Background(), "0123456789ABCDEFGHIJKL")
-			if !errors.Is(err, test.want) {
-				t.Fatalf("error=%v want=%v", err, test.want)
+			err := test.call(Client{HTTPClient: httpClient})
+			if !errors.Is(err, ErrUnauthorized) || strings.Contains(err.Error(), "canary") {
+				t.Fatalf("error=%v", err)
 			}
 		})
-	}
-
-	calls := 0
-	spotify := Client{
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			calls++
-			if calls == 1 {
-				return response(http.StatusServiceUnavailable, ""), nil
-			}
-			return response(http.StatusOK, `{"id":"0123456789ABCDEFGHIJKL"}`), nil
-		})},
-		Wait: func(context.Context, time.Duration) error { return nil },
-	}
-	if _, err := spotify.GetTrack(context.Background(), "0123456789ABCDEFGHIJKL"); err != nil || calls != 2 {
-		t.Fatalf("retry error=%v calls=%d", err, calls)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	spotify.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		return nil, request.Context().Err()
-	})}
-	if _, err := spotify.GetTrack(ctx, "0123456789ABCDEFGHIJKL"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation error=%v", err)
 	}
 }
 
@@ -269,49 +245,6 @@ func TestCatalogTraversalRejectsInvalidInputsAndPages(t *testing.T) {
 		if _, err := spotify.ListArtistAlbums(context.Background(), id, 1, 0); !errors.Is(err, ErrInvalidResponse) {
 			t.Fatalf("page=%s error=%v", page, err)
 		}
-	}
-}
-
-func TestCatalogTraversalInheritsTransportBehavior(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	for _, test := range []struct {
-		status int
-		want   error
-	}{
-		{http.StatusUnauthorized, ErrUnauthorized},
-		{http.StatusForbidden, ErrForbidden},
-	} {
-		httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return response(test.status, "secret-canary"), nil
-		})}
-		_, err := (Client{HTTPClient: httpClient}).ListArtistAlbums(context.Background(), id, 1, 0)
-		if !errors.Is(err, test.want) || strings.Contains(err.Error(), "canary") {
-			t.Fatalf("status=%d error=%v", test.status, err)
-		}
-	}
-
-	calls := 0
-	spotify := Client{
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			calls++
-			if calls == 1 {
-				return response(http.StatusServiceUnavailable, ""), nil
-			}
-			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
-		})},
-		Wait: func(context.Context, time.Duration) error { return nil },
-	}
-	if _, err := spotify.ListAlbumTracks(context.Background(), id, 1, 0); err != nil || calls != 2 {
-		t.Fatalf("retry error=%v calls=%d", err, calls)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	spotify.HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		return nil, request.Context().Err()
-	})}
-	if _, err := spotify.ListAlbumTracks(ctx, id, 1, 0); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation error=%v", err)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/credstoretest"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/session"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
@@ -114,7 +115,7 @@ func TestMeRefreshesAndPersistsSameCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := token.Decode([]byte(harness.store.values["default/"+credentials.OAuthTokenKey]), now)
+	stored, err := token.Decode([]byte(harness.store.Values["default/"+credentials.OAuthTokenKey]), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,8 +125,8 @@ func TestMeRefreshesAndPersistsSameCredential(t *testing.T) {
 	if !strings.Contains(stdout, "scopes\tplaylist-read-private,user-read-private\n") {
 		t.Fatalf("stdout = %q", stdout)
 	}
-	if harness.store.setCalls != 1 || !harness.store.overwrite {
-		t.Fatalf("set calls = %d overwrite = %t", harness.store.setCalls, harness.store.overwrite)
+	if harness.store.SetCalls != 1 || !harness.store.Overwrite {
+		t.Fatalf("set calls = %d overwrite = %t", harness.store.SetCalls, harness.store.Overwrite)
 	}
 }
 
@@ -162,7 +163,7 @@ func TestMeFailureClasses(t *testing.T) {
 	})
 	t.Run("invalid stored credential", func(t *testing.T) {
 		harness := newHarness(t, now, nil)
-		harness.store.values["default/"+credentials.OAuthTokenKey] = "invalid-token-secret-sentinel"
+		harness.store.Values["default/"+credentials.OAuthTokenKey] = "invalid-token-secret-sentinel"
 		stdout, err := harness.execute()
 		if exitcode.Code(err) != exitcode.Config || stdout != "" || strings.Contains(err.Error(), "invalid-token-secret-sentinel") {
 			t.Fatalf("stdout=%q error=%v code=%d", stdout, err, exitcode.Code(err))
@@ -249,7 +250,7 @@ func TestMeReportsOutputWriterFailure(t *testing.T) {
 
 type meHarness struct {
 	scope      statedir.Scope
-	store      *memoryStore
+	store      *credstoretest.Store
 	now        time.Time
 	httpClient *http.Client
 	tokenURL   string
@@ -266,7 +267,7 @@ func newHarness(t *testing.T, now time.Time, server *httptest.Server) *meHarness
 	if err := config.Save(scope, cfg); err != nil {
 		t.Fatal(err)
 	}
-	harness := &meHarness{scope: scope, store: &memoryStore{values: map[string]string{}}, now: now}
+	harness := &meHarness{scope: scope, store: &credstoretest.Store{Values: map[string]string{}}, now: now}
 	if server != nil {
 		harness.httpClient = server.Client()
 		harness.apiBaseURL = server.URL + "/v1"
@@ -280,7 +281,7 @@ func (harness *meHarness) storeEnvelope(t *testing.T, value token.Envelope) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness.store.values["default/"+credentials.OAuthTokenKey] = string(encoded)
+	harness.store.Values["default/"+credentials.OAuthTokenKey] = string(encoded)
 }
 
 func (harness *meHarness) execute(args ...string) (string, error) {
@@ -314,27 +315,6 @@ func (harness *meHarness) executeTo(stdout io.Writer, args ...string) error {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("writer failed") }
-
-type memoryStore struct {
-	values    map[string]string
-	setCalls  int
-	overwrite bool
-}
-
-func (store *memoryStore) Close() error { return nil }
-func (store *memoryStore) Get(profile, key string) (string, error) {
-	value, ok := store.values[profile+"/"+key]
-	if !ok {
-		return "", credstore.ErrNotFound
-	}
-	return value, nil
-}
-func (store *memoryStore) Set(profile, key, value string, opts ...credstore.SetOpt) error {
-	store.setCalls++
-	store.overwrite = len(opts) > 0
-	store.values[profile+"/"+key] = value
-	return nil
-}
 
 type failingTransport struct{}
 

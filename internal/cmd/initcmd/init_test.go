@@ -17,6 +17,7 @@ import (
 	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/credstoretest"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
@@ -60,7 +61,7 @@ func TestInteractiveInitPromptsVerifiesThenCommits(t *testing.T) {
 	if loaded.ClientID != "client-id" || loaded.Keyring.Backend != "file" {
 		t.Fatalf("saved config = %+v", loaded)
 	}
-	stored, err := token.Decode([]byte(harness.store.values["default/"+credentials.OAuthTokenKey]), harness.now)
+	stored, err := token.Decode([]byte(harness.store.Values["default/"+credentials.OAuthTokenKey]), harness.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestNonInteractiveInitHasFlagParityAndNeverPrompts(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := harness.store.values["automation/"+credentials.OAuthTokenKey]; !ok {
+	if _, ok := harness.store.Values["automation/"+credentials.OAuthTokenKey]; !ok {
 		t.Fatal("credential was not written to requested ref")
 	}
 }
@@ -128,7 +129,7 @@ func TestInteractiveInitBackendChangeReplacesDestinationCredential(t *testing.T)
 		t.Fatal(err)
 	}
 	key := "default/" + credentials.OAuthTokenKey
-	harness.store.values[key] = "stale-destination-credential"
+	harness.store.Values[key] = "stale-destination-credential"
 	harness.interactive = true
 	harness.prompt = func(setup *Setup) error {
 		setup.ClientID = "client-id"
@@ -138,8 +139,8 @@ func TestInteractiveInitBackendChangeReplacesDestinationCredential(t *testing.T)
 	if err := harness.execute("--no-verify"); err != nil {
 		t.Fatal(err)
 	}
-	if harness.store.values[key] == "stale-destination-credential" || harness.store.setCalls != 1 {
-		t.Fatalf("credential = %q, set calls = %d", harness.store.values[key], harness.store.setCalls)
+	if harness.store.Values[key] == "stale-destination-credential" || harness.store.SetCalls != 1 {
+		t.Fatalf("credential = %q, set calls = %d", harness.store.Values[key], harness.store.SetCalls)
 	}
 }
 
@@ -150,7 +151,7 @@ func TestNonInteractiveInitBackendChangeStillRequiresOverwrite(t *testing.T) {
 	if err := config.Save(harness.scope, cfg); err != nil {
 		t.Fatal(err)
 	}
-	harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+	harness.store.Values["default/"+credentials.OAuthTokenKey] = "old-secret"
 	err := harness.execute("--backend", "keychain", "--non-interactive", "--client-id", "client-id", "--no-verify")
 	if !errors.Is(err, credstore.ErrExists) {
 		t.Fatalf("error = %v", err)
@@ -180,7 +181,7 @@ func TestInitArgumentMessage(t *testing.T) {
 
 func TestInitRefusesExistingCredentialBeforeAuthorization(t *testing.T) {
 	harness := newInitHarness(t)
-	harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+	harness.store.Values["default/"+credentials.OAuthTokenKey] = "old-secret"
 	called := false
 	harness.authorize = func(context.Context, auth.Request) (token.Envelope, error) {
 		called = true
@@ -195,12 +196,12 @@ func TestInitRefusesExistingCredentialBeforeAuthorization(t *testing.T) {
 func TestInitOverwritesExistingCredentialWhenRequested(t *testing.T) {
 	harness := newInitHarness(t)
 	key := "default/" + credentials.OAuthTokenKey
-	harness.store.values[key] = "old-secret"
+	harness.store.Values[key] = "old-secret"
 	if err := harness.execute("--client-id", "client-id", "--no-verify", "--overwrite"); err != nil {
 		t.Fatal(err)
 	}
-	if harness.store.values[key] == "old-secret" || harness.store.setCalls != 1 {
-		t.Fatalf("credential = %q, set calls = %d", harness.store.values[key], harness.store.setCalls)
+	if harness.store.Values[key] == "old-secret" || harness.store.SetCalls != 1 {
+		t.Fatalf("credential = %q, set calls = %d", harness.store.Values[key], harness.store.SetCalls)
 	}
 }
 
@@ -211,8 +212,8 @@ func TestInitVerificationFailureWritesNothing(t *testing.T) {
 		return client.User{}, errors.New("verification failed")
 	}
 	err := harness.execute("--client-id", "client-id")
-	if exitcode.Code(err) != exitcode.Upstream || harness.store.setCalls != 0 || containsEvent(harness.events, "save") {
-		t.Fatalf("error=%v events=%v setCalls=%d", err, harness.events, harness.store.setCalls)
+	if exitcode.Code(err) != exitcode.Upstream || harness.store.SetCalls != 0 || containsEvent(harness.events, "save") {
+		t.Fatalf("error=%v events=%v setCalls=%d", err, harness.events, harness.store.SetCalls)
 	}
 }
 
@@ -225,8 +226,8 @@ func TestInitMissingConfigSaverWritesNothing(t *testing.T) {
 		return harness.envelope(), nil
 	}
 	err := harness.execute("--client-id", "client-id", "--no-verify")
-	if exitcode.Code(err) != exitcode.Config || called || harness.store.setCalls != 0 {
-		t.Fatalf("error=%v authorize=%t setCalls=%d", err, called, harness.store.setCalls)
+	if exitcode.Code(err) != exitcode.Config || called || harness.store.SetCalls != 0 {
+		t.Fatalf("error=%v authorize=%t setCalls=%d", err, called, harness.store.SetCalls)
 	}
 }
 
@@ -248,8 +249,8 @@ func TestInitClassifiesAuthorizationFailures(t *testing.T) {
 			return token.Envelope{}, test.err
 		}
 		err := harness.execute("--client-id", "client-id", "--no-verify")
-		if exitcode.Code(err) != test.code || harness.store.setCalls != 0 {
-			t.Fatalf("source %v: error=%v code=%d setCalls=%d", test.err, err, exitcode.Code(err), harness.store.setCalls)
+		if exitcode.Code(err) != test.code || harness.store.SetCalls != 0 {
+			t.Fatalf("source %v: error=%v code=%d setCalls=%d", test.err, err, exitcode.Code(err), harness.store.SetCalls)
 		}
 	}
 }
@@ -265,13 +266,13 @@ func TestInitializerFailureSitesRetainExitCodes(t *testing.T) {
 		{name: "store open", configure: func(h *initHarness) {
 			h.openStore = func(credentials.OpenRequest) (CredentialStore, error) { return nil, errors.New("open failed") }
 		}, code: exitcode.Config},
-		{name: "exists", configure: func(h *initHarness) { h.store.existsErr = errors.New("exists failed") }, code: exitcode.Config},
+		{name: "exists", configure: func(h *initHarness) { h.store.ExistsErr = errors.New("exists failed") }, code: exitcode.Config},
 		{name: "existing without overwrite", configure: func(h *initHarness) {
-			h.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+			h.store.Values["default/"+credentials.OAuthTokenKey] = "old-secret"
 		}, code: exitcode.Generic},
 		{name: "read previous", configure: func(h *initHarness) {
-			h.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
-			h.store.getErr = errors.New("get failed")
+			h.store.Values["default/"+credentials.OAuthTokenKey] = "old-secret"
+			h.store.GetErr = errors.New("get failed")
 		}, args: []string{"--overwrite"}, code: exitcode.Config},
 		{name: "nil authorizer", configure: func(h *initHarness) { h.authorize = nil }, code: exitcode.Generic},
 		{name: "nil verifier", configure: func(h *initHarness) { h.verify = nil }, args: []string{}, code: exitcode.Generic},
@@ -314,7 +315,7 @@ func TestInitRollsBackCredentialWhenConfigSaveFails(t *testing.T) {
 			harness := newInitHarness(t)
 			key := "default/" + credentials.OAuthTokenKey
 			if test.oldValue != "" {
-				harness.store.values[key] = test.oldValue
+				harness.store.Values[key] = test.oldValue
 			}
 			harness.saveConfig = func(config.Config) error {
 				harness.events = append(harness.events, "save")
@@ -328,7 +329,7 @@ func TestInitRollsBackCredentialWhenConfigSaveFails(t *testing.T) {
 			if exitcode.Code(err) != exitcode.Config {
 				t.Fatalf("error = %v code=%d", err, exitcode.Code(err))
 			}
-			if got := harness.store.values[key]; got != test.want {
+			if got := harness.store.Values[key]; got != test.want {
 				t.Fatalf("credential after rollback = %q, want %q", got, test.want)
 			}
 		})
@@ -344,7 +345,7 @@ func TestInitCredentialAndRollbackFailuresAreSecretSafe(t *testing.T) {
 		{
 			name: "credential write",
 			configure: func(harness *initHarness) {
-				harness.store.setErr = errors.New("backend echoed access-secret and refresh-secret")
+				harness.store.SetErr = errors.New("backend echoed access-secret and refresh-secret")
 			},
 			args: []string{"--client-id", "client-id", "--no-verify"},
 		},
@@ -352,16 +353,16 @@ func TestInitCredentialAndRollbackFailuresAreSecretSafe(t *testing.T) {
 			name: "new credential rollback",
 			configure: func(harness *initHarness) {
 				harness.saveConfig = func(config.Config) error { return errors.New("config echoed access-secret") }
-				harness.store.deleteErr = errors.New("delete echoed refresh-secret")
+				harness.store.DeleteErr = errors.New("delete echoed refresh-secret")
 			},
 			args: []string{"--client-id", "client-id", "--no-verify"},
 		},
 		{
 			name: "overwritten credential rollback",
 			configure: func(harness *initHarness) {
-				harness.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+				harness.store.Values["default/"+credentials.OAuthTokenKey] = "old-secret"
 				harness.saveConfig = func(config.Config) error { return errors.New("config echoed old-secret") }
-				harness.store.setErrors = []error{nil, errors.New("restore echoed old-secret and access-secret")}
+				harness.store.SetErrs = []error{nil, errors.New("restore echoed old-secret and access-secret")}
 			},
 			args: []string{"--client-id", "client-id", "--no-verify", "--overwrite"},
 		},
@@ -386,7 +387,7 @@ func TestInitCredentialAndRollbackFailuresAreSecretSafe(t *testing.T) {
 
 type initHarness struct {
 	scope       statedir.Scope
-	store       *initStore
+	store       *credstoretest.Store
 	now         time.Time
 	interactive bool
 	backend     string
@@ -406,7 +407,7 @@ func newInitHarness(t *testing.T) *initHarness {
 	statedirtest.Hermetic(t)
 	harness := &initHarness{
 		scope: statedir.Scope{Name: config.Service},
-		store: &initStore{values: map[string]string{}},
+		store: &credstoretest.Store{Values: map[string]string{}},
 		now:   time.Now().UTC(),
 	}
 	harness.authorize = func(context.Context, auth.Request) (token.Envelope, error) {
@@ -421,7 +422,7 @@ func newInitHarness(t *testing.T) *initHarness {
 		harness.events = append(harness.events, "save")
 		return config.Save(harness.scope, value)
 	}
-	harness.store.onSet = func() { harness.events = append(harness.events, "set") }
+	harness.store.OnSet = func() { harness.events = append(harness.events, "set") }
 	harness.openStore = func(request credentials.OpenRequest) (CredentialStore, error) {
 		harness.requests = append(harness.requests, request)
 		return harness.store, nil
@@ -452,59 +453,6 @@ func (harness *initHarness) execute(args ...string) error {
 	command.Flags().StringVar(&harness.backend, credstore.BackendFlagName, "", "")
 	command.SetArgs(args)
 	return command.ExecuteContext(context.Background())
-}
-
-type initStore struct {
-	values    map[string]string
-	setCalls  int
-	setErr    error
-	setErrors []error
-	deleteErr error
-	existsErr error
-	getErr    error
-	onSet     func()
-}
-
-func (*initStore) Close() error { return nil }
-func (store *initStore) Get(profile, key string) (string, error) {
-	if store.getErr != nil {
-		return "", store.getErr
-	}
-	value, ok := store.values[profile+"/"+key]
-	if !ok {
-		return "", credstore.ErrNotFound
-	}
-	return value, nil
-}
-func (store *initStore) Set(profile, key, value string, _ ...credstore.SetOpt) error {
-	store.setCalls++
-	if store.onSet != nil {
-		store.onSet()
-	}
-	err := store.setErr
-	if len(store.setErrors) > 0 {
-		err = store.setErrors[0]
-		store.setErrors = store.setErrors[1:]
-	}
-	if err != nil {
-		return err
-	}
-	store.values[profile+"/"+key] = value
-	return nil
-}
-func (store *initStore) Delete(profile, key string) error {
-	if store.deleteErr != nil {
-		return store.deleteErr
-	}
-	delete(store.values, profile+"/"+key)
-	return nil
-}
-func (store *initStore) Exists(profile, key string) (bool, error) {
-	if store.existsErr != nil {
-		return false, store.existsErr
-	}
-	_, ok := store.values[profile+"/"+key]
-	return ok, nil
 }
 
 func containsEvent(events []string, want string) bool {

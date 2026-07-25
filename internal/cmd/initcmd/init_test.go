@@ -254,6 +254,52 @@ func TestInitClassifiesAuthorizationFailures(t *testing.T) {
 	}
 }
 
+func TestInitializerFailureSitesRetainExitCodes(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*initHarness)
+		args      []string
+		code      int
+	}{
+		{name: "nil store opener", configure: func(h *initHarness) { h.openStore = nil }, code: exitcode.Generic},
+		{name: "store open", configure: func(h *initHarness) {
+			h.openStore = func(credentials.OpenRequest) (CredentialStore, error) { return nil, errors.New("open failed") }
+		}, code: exitcode.Config},
+		{name: "exists", configure: func(h *initHarness) { h.store.existsErr = errors.New("exists failed") }, code: exitcode.Config},
+		{name: "existing without overwrite", configure: func(h *initHarness) {
+			h.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+		}, code: exitcode.Generic},
+		{name: "read previous", configure: func(h *initHarness) {
+			h.store.values["default/"+credentials.OAuthTokenKey] = "old-secret"
+			h.store.getErr = errors.New("get failed")
+		}, args: []string{"--overwrite"}, code: exitcode.Config},
+		{name: "nil authorizer", configure: func(h *initHarness) { h.authorize = nil }, code: exitcode.Generic},
+		{name: "nil verifier", configure: func(h *initHarness) { h.verify = nil }, args: []string{}, code: exitcode.Generic},
+		{name: "token encode", configure: func(h *initHarness) {
+			h.authorize = func(context.Context, auth.Request) (token.Envelope, error) { return token.Envelope{}, nil }
+		}, code: exitcode.Config},
+		{name: "verification config", configure: func(h *initHarness) {
+			h.verify = func(context.Context, config.Config, token.Envelope) (client.User, error) {
+				return client.User{}, auth.ErrInvalidGrant
+			}
+		}, args: []string{}, code: exitcode.Config},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newInitHarness(t)
+			test.configure(harness)
+			args := append([]string{"--client-id", "client-id"}, test.args...)
+			if test.args == nil {
+				args = append(args, "--no-verify")
+			}
+			err := harness.execute(args...)
+			if exitcode.Code(err) != test.code {
+				t.Fatalf("error=%v code=%d want=%d", err, exitcode.Code(err), test.code)
+			}
+		})
+	}
+}
+
 func TestInitRollsBackCredentialWhenConfigSaveFails(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -344,6 +390,7 @@ type initHarness struct {
 	now         time.Time
 	interactive bool
 	backend     string
+	openStore   StoreOpener
 	prompt      func(*Setup) error
 	authorize   func(context.Context, auth.Request) (token.Envelope, error)
 	verify      func(context.Context, config.Config, token.Envelope) (client.User, error)
@@ -375,6 +422,10 @@ func newInitHarness(t *testing.T) *initHarness {
 		return config.Save(harness.scope, value)
 	}
 	harness.store.onSet = func() { harness.events = append(harness.events, "set") }
+	harness.openStore = func(request credentials.OpenRequest) (CredentialStore, error) {
+		harness.requests = append(harness.requests, request)
+		return harness.store, nil
+	}
 	return harness
 }
 
@@ -390,11 +441,8 @@ func (harness *initHarness) execute(args ...string) error {
 	command := New(Dependencies{
 		Scope: harness.scope, Interactive: harness.interactive, Prompt: harness.prompt,
 		Initializer: Initializer{
-			OpenStore: func(request credentials.OpenRequest) (CredentialStore, error) {
-				harness.requests = append(harness.requests, request)
-				return harness.store, nil
-			},
-			Now: func() time.Time { return harness.now }, Authorize: harness.authorize,
+			OpenStore: harness.openStore,
+			Now:       func() time.Time { return harness.now }, Authorize: harness.authorize,
 			Verify: harness.verify, SaveConfig: harness.saveConfig,
 		},
 	})
@@ -412,11 +460,16 @@ type initStore struct {
 	setErr    error
 	setErrors []error
 	deleteErr error
+	existsErr error
+	getErr    error
 	onSet     func()
 }
 
 func (*initStore) Close() error { return nil }
 func (store *initStore) Get(profile, key string) (string, error) {
+	if store.getErr != nil {
+		return "", store.getErr
+	}
 	value, ok := store.values[profile+"/"+key]
 	if !ok {
 		return "", credstore.ErrNotFound
@@ -447,6 +500,9 @@ func (store *initStore) Delete(profile, key string) error {
 	return nil
 }
 func (store *initStore) Exists(profile, key string) (bool, error) {
+	if store.existsErr != nil {
+		return false, store.existsErr
+	}
 	_, ok := store.values[profile+"/"+key]
 	return ok, nil
 }

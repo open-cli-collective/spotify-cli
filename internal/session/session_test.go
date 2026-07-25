@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
-	"github.com/open-cli-collective/spotify-cli/internal/client"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
@@ -96,165 +94,6 @@ func TestOpenErrorsDoNotEchoStoredCredential(t *testing.T) {
 	}
 }
 
-func TestSessionDelegatesCatalogSearch(t *testing.T) {
-	var types []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		searchType := request.URL.Query().Get("type")
-		types = append(types, searchType)
-		body := `{"albums":{"items":[],"limit":1,"offset":0,"total":0,"next":null}}`
-		if searchType == "artist" {
-			body = `{"artists":{"items":[],"limit":1,"offset":0,"total":0,"next":null}}`
-		}
-		return response(http.StatusOK, body), nil
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	if _, err := authenticated.SearchAlbums(context.Background(), "album", 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.SearchArtists(context.Background(), "artist", 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(types, ",") != "album,artist" {
-		t.Fatalf("types = %v", types)
-	}
-}
-
-func TestSessionDelegatesCatalogGet(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	var paths []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		paths = append(paths, request.URL.Path)
-		return response(http.StatusOK, `{"id":"`+id+`"}`), nil
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	if _, err := authenticated.GetTrack(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.GetAlbum(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.GetArtist(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(paths, ",") != "/v1/tracks/"+id+",/v1/albums/"+id+",/v1/artists/"+id {
-		t.Fatalf("paths = %v", paths)
-	}
-}
-
-func TestSessionDelegatesCatalogTraversal(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	var paths []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		paths = append(paths, request.URL.RequestURI())
-		return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	if _, err := authenticated.ListAlbumTracks(context.Background(), id, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.ListArtistAlbums(context.Background(), id, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	want := "/v1/albums/" + id + "/tracks?limit=1&offset=0,/v1/artists/" + id + "/albums?limit=1&offset=0"
-	if strings.Join(paths, ",") != want {
-		t.Fatalf("paths=%v", paths)
-	}
-}
-
-func TestSessionDelegatesPlaylistReads(t *testing.T) {
-	const id = "0123456789ABCDEFGHIJKL"
-	var paths []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		paths = append(paths, request.URL.RequestURI())
-		if request.URL.Path == "/v1/me/playlists" {
-			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
-		}
-		if request.URL.Path == "/v1/playlists/"+id+"/items" {
-			return response(http.StatusOK, `{"items":[],"limit":1,"offset":0,"total":0,"next":null}`), nil
-		}
-		return response(http.StatusOK, `{"id":"`+id+`","items":{"total":0}}`), nil
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	if _, err := authenticated.ListCurrentUserPlaylists(context.Background(), 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.GetPlaylist(context.Background(), id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authenticated.ListPlaylistItems(context.Background(), id, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	want := "/v1/me/playlists?limit=1&offset=0,/v1/playlists/" + id + ",/v1/playlists/" + id + "/items?additional_types=episode&limit=1&offset=0"
-	if strings.Join(paths, ",") != want {
-		t.Fatalf("paths=%v want=%s", paths, want)
-	}
-}
-
-func TestSessionDelegatesPlaylistMutations(t *testing.T) {
-	const (
-		playlistID = "0123456789ABCDEFGHIJKL"
-		trackID    = "abcdefghijklmnopqrstuv"
-	)
-	var requests []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests = append(requests, request.Method+" "+request.URL.Path)
-		return response(http.StatusOK, `{"snapshot_id":"next"}`), nil
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	position := 1
-	uri := "spotify:track:" + trackID
-	if snapshot, err := authenticated.AddPlaylistItems(context.Background(), playlistID, []string{uri}, &position); err != nil || snapshot != "next" {
-		t.Fatalf("add snapshot=%q error=%v", snapshot, err)
-	}
-	if snapshot, err := authenticated.RemovePlaylistItemsByURI(context.Background(), playlistID, uri, "before"); err != nil || snapshot != "next" {
-		t.Fatalf("remove snapshot=%q error=%v", snapshot, err)
-	}
-	want := "POST /v1/playlists/" + playlistID + "/items,DELETE /v1/playlists/" + playlistID + "/items"
-	if strings.Join(requests, ",") != want {
-		t.Fatalf("requests=%v want=%s", requests, want)
-	}
-}
-
-func TestSessionDelegatesSavedAlbums(t *testing.T) {
-	const (
-		album  = "0123456789ABCDEFGHIJKL"
-		artist = "abcdefghijklmnopqrstuv"
-	)
-	var requests []string
-	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests = append(requests, request.Method+" "+request.URL.RequestURI())
-		switch request.URL.Path {
-		case "/v1/me/albums":
-			return response(http.StatusOK, `{"items":[{"added_at":"2026-07-23T12:00:00Z","album":{"id":"`+album+`","artists":[{"id":"`+artist+`"}]}}],"limit":1,"offset":0,"total":1,"next":null}`), nil
-		case "/v1/me/library/contains":
-			return response(http.StatusOK, `[true]`), nil
-		default:
-			return response(http.StatusNoContent, ""), nil
-		}
-	})}
-	authenticated := New(client.Client{HTTPClient: httpClient, BaseURL: "https://api.spotify.invalid/v1"}, nil, nil)
-	uri := "spotify:album:" + album
-	if _, err := authenticated.ListSavedAlbums(context.Background(), 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if saved, err := authenticated.CheckSavedAlbums(context.Background(), []string{uri}); err != nil || len(saved) != 1 || !saved[0] {
-		t.Fatalf("saved=%v error=%v", saved, err)
-	}
-	if err := authenticated.SaveSavedAlbums(context.Background(), []string{uri}); err != nil {
-		t.Fatal(err)
-	}
-	if err := authenticated.RemoveSavedAlbums(context.Background(), []string{uri}); err != nil {
-		t.Fatal(err)
-	}
-	want := "GET /v1/me/albums?limit=1&offset=0," +
-		"GET /v1/me/library/contains?uris=spotify%3Aalbum%3A" + album + "," +
-		"PUT /v1/me/library?uris=spotify%3Aalbum%3A" + album + "," +
-		"DELETE /v1/me/library?uris=spotify%3Aalbum%3A" + album
-	if strings.Join(requests, ",") != want {
-		t.Fatalf("requests=%v want=%s", requests, want)
-	}
-}
-
 func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
 	t.Helper()
 	statedirtest.Hermetic(t)
@@ -293,8 +132,4 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
-}
-
-func response(status int, body string) *http.Response {
-	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }

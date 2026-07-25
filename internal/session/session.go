@@ -40,9 +40,9 @@ type Opener struct {
 	APIBaseURL string
 }
 
-// Session exposes only the authenticated client, granted scopes, and lifecycle.
+// Session contains the authenticated client, granted scopes, and lifecycle.
 type Session struct {
-	client client.Client
+	client.Client
 	mu     sync.RWMutex
 	scopes []string
 	close  func() error
@@ -50,122 +50,7 @@ type Session struct {
 
 // New creates a session around an authenticated client.
 func New(spotifyClient client.Client, scopes []string, closeSession func() error) *Session {
-	return &Session{client: spotifyClient, scopes: append([]string(nil), scopes...), close: closeSession}
-}
-
-// Me returns the authenticated Spotify identity.
-func (session *Session) Me(ctx context.Context) (client.User, error) {
-	return session.client.Me(ctx)
-}
-
-// GetTrack returns one track with the authenticated Spotify client.
-func (session *Session) GetTrack(ctx context.Context, id string) (client.Track, error) {
-	return session.client.GetTrack(ctx, id)
-}
-
-// GetAlbum returns one album with the authenticated Spotify client.
-func (session *Session) GetAlbum(ctx context.Context, id string) (client.Album, error) {
-	return session.client.GetAlbum(ctx, id)
-}
-
-// GetArtist returns one artist with the authenticated Spotify client.
-func (session *Session) GetArtist(ctx context.Context, id string) (client.Artist, error) {
-	return session.client.GetArtist(ctx, id)
-}
-
-// ListAlbumTracks lists tracks with the authenticated Spotify client.
-func (session *Session) ListAlbumTracks(ctx context.Context, id string, limit, offset int) (client.TrackPage, error) {
-	return session.client.ListAlbumTracks(ctx, id, limit, offset)
-}
-
-// ListArtistAlbums lists albums with the authenticated Spotify client.
-func (session *Session) ListArtistAlbums(ctx context.Context, id string, limit, offset int) (client.AlbumPage, error) {
-	return session.client.ListArtistAlbums(ctx, id, limit, offset)
-}
-
-// ListCurrentUserPlaylists lists the current user's playlists with the authenticated Spotify client.
-func (session *Session) ListCurrentUserPlaylists(ctx context.Context, limit, offset int) (client.PlaylistPage, error) {
-	return session.client.ListCurrentUserPlaylists(ctx, limit, offset)
-}
-
-// GetPlaylist returns one playlist with the authenticated Spotify client.
-func (session *Session) GetPlaylist(ctx context.Context, id string) (client.Playlist, error) {
-	return session.client.GetPlaylist(ctx, id)
-}
-
-// ListPlaylistItems lists one ordered playlist-item page with the authenticated Spotify client.
-func (session *Session) ListPlaylistItems(ctx context.Context, id string, limit, offset int) (client.PlaylistItemPage, error) {
-	return session.client.ListPlaylistItems(ctx, id, limit, offset)
-}
-
-// AddPlaylistItems adds tracks with the authenticated Spotify client.
-func (session *Session) AddPlaylistItems(ctx context.Context, id string, uris []string, position *int) (string, error) {
-	return session.client.AddPlaylistItems(ctx, id, uris, position)
-}
-
-// RemovePlaylistItemsByURI removes every occurrence of one track URI with the authenticated Spotify client.
-func (session *Session) RemovePlaylistItemsByURI(ctx context.Context, id, uri, snapshotID string) (string, error) {
-	return session.client.RemovePlaylistItemsByURI(ctx, id, uri, snapshotID)
-}
-
-// RemovePlaylistItemAtPosition removes one specific track occurrence with the authenticated Spotify client.
-func (session *Session) RemovePlaylistItemAtPosition(ctx context.Context, id, uri string, position int, snapshotID string) (string, error) {
-	return session.client.RemovePlaylistItemAtPosition(ctx, id, uri, position, snapshotID)
-}
-
-// ListSavedTracks lists saved tracks with the authenticated Spotify client.
-func (session *Session) ListSavedTracks(ctx context.Context, limit, offset int) (client.SavedTrackPage, error) {
-	return session.client.ListSavedTracks(ctx, limit, offset)
-}
-
-// CheckSavedTracks checks saved-track membership with the authenticated Spotify client.
-func (session *Session) CheckSavedTracks(ctx context.Context, uris []string) ([]bool, error) {
-	return session.client.CheckSavedTracks(ctx, uris)
-}
-
-// SaveSavedTracks saves tracks with the authenticated Spotify client.
-func (session *Session) SaveSavedTracks(ctx context.Context, uris []string) error {
-	return session.client.SaveSavedTracks(ctx, uris)
-}
-
-// RemoveSavedTracks removes saved tracks with the authenticated Spotify client.
-func (session *Session) RemoveSavedTracks(ctx context.Context, uris []string) error {
-	return session.client.RemoveSavedTracks(ctx, uris)
-}
-
-// ListSavedAlbums lists saved albums with the authenticated Spotify client.
-func (session *Session) ListSavedAlbums(ctx context.Context, limit, offset int) (client.SavedAlbumPage, error) {
-	return session.client.ListSavedAlbums(ctx, limit, offset)
-}
-
-// CheckSavedAlbums checks saved-album membership with the authenticated Spotify client.
-func (session *Session) CheckSavedAlbums(ctx context.Context, uris []string) ([]bool, error) {
-	return session.client.CheckSavedAlbums(ctx, uris)
-}
-
-// SaveSavedAlbums saves albums with the authenticated Spotify client.
-func (session *Session) SaveSavedAlbums(ctx context.Context, uris []string) error {
-	return session.client.SaveSavedAlbums(ctx, uris)
-}
-
-// RemoveSavedAlbums removes saved albums with the authenticated Spotify client.
-func (session *Session) RemoveSavedAlbums(ctx context.Context, uris []string) error {
-	return session.client.RemoveSavedAlbums(ctx, uris)
-}
-
-// SearchTracks searches tracks with the authenticated Spotify client.
-func (session *Session) SearchTracks(ctx context.Context, query string, limit, offset int) (client.TrackPage, error) {
-	return session.client.SearchTracks(ctx, query, limit, offset)
-}
-
-// SearchAlbums searches albums with the authenticated Spotify client.
-func (session *Session) SearchAlbums(ctx context.Context, query string, limit, offset int) (client.AlbumPage, error) {
-	return session.client.SearchAlbums(ctx, query, limit, offset)
-}
-
-// SearchArtists searches artists with the authenticated Spotify client.
-func (session *Session) SearchArtists(ctx context.Context, query string, limit, offset int) (client.ArtistPage, error) {
-	return session.client.SearchArtists(ctx, query, limit, offset)
+	return &Session{Client: spotifyClient, scopes: append([]string(nil), scopes...), close: closeSession}
 }
 
 // Scopes returns the scopes currently attached to the persisted OAuth token.
@@ -239,7 +124,7 @@ func (opener Opener) Open(ctx context.Context, backend string, backendSet bool) 
 	if opener.HTTPClient != nil {
 		oauthContext = context.WithValue(ctx, oauth2.HTTPClient, opener.HTTPClient)
 	}
-	authenticated.client = client.Client{
+	authenticated.Client = client.Client{
 		HTTPClient: oauth2.NewClient(oauthContext, tokenSource),
 		BaseURL:    opener.APIBaseURL,
 	}

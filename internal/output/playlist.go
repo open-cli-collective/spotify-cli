@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,7 +31,7 @@ const (
 var (
 	defaultPlaylistFields  = []PlaylistField{PlaylistID, PlaylistName, PlaylistOwnerID, PlaylistOwner, PlaylistItemCount, PlaylistPublic, PlaylistCollaborative}
 	extendedPlaylistFields = []PlaylistField{PlaylistURI, PlaylistURL, PlaylistSnapshotID, PlaylistDescription}
-	allPlaylistFields      = append(append(append([]PlaylistField(nil), defaultPlaylistFields...), extendedPlaylistFields...), PlaylistArtwork)
+	allPlaylistFields      = slices.Concat(defaultPlaylistFields, extendedPlaylistFields, []PlaylistField{PlaylistArtwork})
 )
 
 // SelectPlaylistFields applies default, widening, artwork, then explicit-field precedence.
@@ -42,30 +43,7 @@ func SelectPlaylistFields(csv string, extended, includeArtwork bool) ([]Playlist
 	if includeArtwork {
 		fields = append(fields, PlaylistArtwork)
 	}
-	if strings.TrimSpace(csv) == "" {
-		return fields, nil
-	}
-	defaults := fields
-	fields = nil
-	seen := map[PlaylistField]bool{}
-	for _, raw := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		field := PlaylistField(strings.ToUpper(trimmed))
-		if !containsPlaylistField(field) {
-			return nil, fmt.Errorf("unknown playlist field %q; valid fields: %s", trimmed, playlistFieldNames())
-		}
-		if !seen[field] {
-			fields = append(fields, field)
-			seen[field] = true
-		}
-	}
-	if len(fields) == 0 {
-		return defaults, nil
-	}
-	return fields, nil
+	return selectFields(csv, fields, allPlaylistFields, "playlist")
 }
 
 // RenderPlaylists renders one pipe-delimited table, including the header for an empty page.
@@ -124,23 +102,6 @@ func playlistCell(playlist client.Playlist, field PlaylistField) string {
 	default:
 		return "-"
 	}
-}
-
-func containsPlaylistField(field PlaylistField) bool {
-	for _, candidate := range allPlaylistFields {
-		if candidate == field {
-			return true
-		}
-	}
-	return false
-}
-
-func playlistFieldNames() string {
-	values := make([]string, len(allPlaylistFields))
-	for index, field := range allPlaylistFields {
-		values[index] = string(field)
-	}
-	return strings.Join(values, ", ")
 }
 
 // PlaylistItemField identifies one stable playlist-item table column.

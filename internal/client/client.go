@@ -614,24 +614,15 @@ func (client Client) ListSavedAlbums(ctx context.Context, limit, offset int) (Sa
 	})
 }
 
-// CheckSavedTracks reports saved membership in input order.
-func (client Client) CheckSavedTracks(ctx context.Context, uris []string) ([]bool, error) {
-	return client.checkSavedItems(ctx, spotifyref.Track, uris)
-}
-
-// CheckSavedAlbums reports saved membership in input order.
-func (client Client) CheckSavedAlbums(ctx context.Context, uris []string) ([]bool, error) {
-	return client.checkSavedItems(ctx, spotifyref.Album, uris)
-}
-
-func (client Client) checkSavedItems(ctx context.Context, kind spotifyref.Kind, uris []string) ([]bool, error) {
-	if !validLibraryURIs(kind, uris) {
+// CheckSavedItems reports saved membership in input order.
+func (client Client) CheckSavedItems(ctx context.Context, kind spotifyref.Kind, ids []string) ([]bool, error) {
+	if !validSavedItemIDs(kind, ids) {
 		return nil, ErrInvalidResponse
 	}
-	result := make([]bool, 0, len(uris))
-	for start := 0; start < len(uris); start += 40 {
-		end := min(start+40, len(uris))
-		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
+	result := make([]bool, 0, len(ids))
+	for start := 0; start < len(ids); start += 40 {
+		end := min(start+40, len(ids))
+		values := url.Values{"uris": {strings.Join(savedItemURIs(kind, ids[start:end]), ",")}}
 		var chunk []bool
 		if err := client.getJSON(ctx, "/me/library/contains?"+values.Encode(), &chunk); err != nil {
 			return nil, err
@@ -644,38 +635,48 @@ func (client Client) checkSavedItems(ctx context.Context, kind spotifyref.Kind, 
 	return result, nil
 }
 
-// SaveSavedTracks adds tracks to the current user's library.
-func (client Client) SaveSavedTracks(ctx context.Context, uris []string) error {
-	return client.mutateSavedItems(ctx, http.MethodPut, spotifyref.Track, uris)
+// SaveSavedItems adds items of one kind to the current user's library.
+func (client Client) SaveSavedItems(ctx context.Context, kind spotifyref.Kind, ids []string) error {
+	return client.mutateSavedItems(ctx, http.MethodPut, kind, ids)
 }
 
-// RemoveSavedTracks removes tracks from the current user's library.
-func (client Client) RemoveSavedTracks(ctx context.Context, uris []string) error {
-	return client.mutateSavedItems(ctx, http.MethodDelete, spotifyref.Track, uris)
+// RemoveSavedItems removes items of one kind from the current user's library.
+func (client Client) RemoveSavedItems(ctx context.Context, kind spotifyref.Kind, ids []string) error {
+	return client.mutateSavedItems(ctx, http.MethodDelete, kind, ids)
 }
 
-// SaveSavedAlbums adds albums to the current user's library.
-func (client Client) SaveSavedAlbums(ctx context.Context, uris []string) error {
-	return client.mutateSavedItems(ctx, http.MethodPut, spotifyref.Album, uris)
-}
-
-// RemoveSavedAlbums removes albums from the current user's library.
-func (client Client) RemoveSavedAlbums(ctx context.Context, uris []string) error {
-	return client.mutateSavedItems(ctx, http.MethodDelete, spotifyref.Album, uris)
-}
-
-func (client Client) mutateSavedItems(ctx context.Context, method string, kind spotifyref.Kind, uris []string) error {
-	if !validLibraryURIs(kind, uris) {
+func (client Client) mutateSavedItems(ctx context.Context, method string, kind spotifyref.Kind, ids []string) error {
+	if !validSavedItemIDs(kind, ids) {
 		return ErrInvalidResponse
 	}
-	for start := 0; start < len(uris); start += 40 {
-		end := min(start+40, len(uris))
-		values := url.Values{"uris": {strings.Join(uris[start:end], ",")}}
+	for start := 0; start < len(ids); start += 40 {
+		end := min(start+40, len(ids))
+		values := url.Values{"uris": {strings.Join(savedItemURIs(kind, ids[start:end]), ",")}}
 		if err := client.mutateRequest(ctx, method, "/me/library?"+values.Encode()); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func validSavedItemIDs(kind spotifyref.Kind, ids []string) bool {
+	if kind != spotifyref.Track && kind != spotifyref.Album || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if !spotifyref.ValidID(id) {
+			return false
+		}
+	}
+	return true
+}
+
+func savedItemURIs(kind spotifyref.Kind, ids []string) []string {
+	uris := make([]string, len(ids))
+	for index, id := range ids {
+		uris[index] = "spotify:" + string(kind) + ":" + id
+	}
+	return uris
 }
 
 func validLibraryURIs(kind spotifyref.Kind, uris []string) bool {

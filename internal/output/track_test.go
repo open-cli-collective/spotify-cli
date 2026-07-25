@@ -1,7 +1,6 @@
 package output
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/open-cli-collective/spotify-cli/internal/client"
@@ -66,7 +65,7 @@ func TestSavedTrackFieldPrecedence(t *testing.T) {
 func intPointer(value int) *int { return &value }
 
 func TestTrackProjectionRejectsUnknownAndIDsHaveNoHeader(t *testing.T) {
-	if _, err := SelectTrackFields("nope", false, false); err == nil || !strings.Contains(err.Error(), "valid fields: ID, TRACK") {
+	if _, err := SelectTrackFields("nope", false, false); err == nil || err.Error() != `unknown track field "nope"; valid fields: ID, TRACK, ARTIST_IDS, ARTISTS, ALBUM_ID, ALBUM, DURATION, URI, URL, DISC_NUMBER, TRACK_NUMBER, EXPLICIT, RESTRICTION, ARTWORK` {
 		t.Fatalf("error = %v", err)
 	}
 	if got := RenderTrackIDs([]client.Track{{ID: "one"}, {ID: "two"}}); got != "one\ntwo\n" {

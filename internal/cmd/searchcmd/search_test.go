@@ -139,7 +139,8 @@ func TestSearchFactoryDerivesNounSpecificText(t *testing.T) {
 	} {
 		subcommand, _, err := command.Find([]string{test.noun})
 		if err != nil || subcommand.Use != test.use || subcommand.Short != test.short ||
-			subcommand.Flags().Lookup("id").Usage != test.idUsage || subcommand.Flags().Lookup("extended").Usage != test.extendedUsage {
+			subcommand.Flags().Lookup("id").Usage != test.idUsage || subcommand.Flags().Lookup("extended").Usage != test.extendedUsage ||
+			subcommand.Flags().Lookup("json") != nil {
 			t.Fatalf("noun=%s command=%+v error=%v", test.noun, subcommand, err)
 		}
 		_, _, opens, err := executeSearch("", test.noun, "q", "--fields", "nope")

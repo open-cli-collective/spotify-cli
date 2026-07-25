@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/credstoretest"
 	"github.com/open-cli-collective/spotify-cli/internal/token"
 )
 
@@ -35,8 +35,8 @@ func TestOpenPassesBackendAndClosesPrivateStore(t *testing.T) {
 	if request.Backend != "file" || !request.BackendSet || len(authenticated.Scopes()) != 1 {
 		t.Fatalf("request=%+v scopes=%v", request, authenticated.Scopes())
 	}
-	if err := authenticated.Close(); err != nil || !store.closed {
-		t.Fatalf("close error=%v closed=%t", err, store.closed)
+	if err := authenticated.Close(); err != nil || !store.Closed {
+		t.Fatalf("close error=%v closed=%t", err, store.Closed)
 	}
 }
 
@@ -86,15 +86,15 @@ func TestOpenErrorsDoNotEchoStoredCredential(t *testing.T) {
 	if err := config.Save(scope, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store := &memoryStore{values: map[string]string{"default/oauth_token": "secret-canary-invalid"}}
+	store := &credstoretest.Store{Values: map[string]string{"default/oauth_token": "secret-canary-invalid"}}
 	opener := Opener{Scope: scope, OpenStore: func(credentials.OpenRequest) (CredentialStore, error) { return store, nil }, Now: func() time.Time { return now }}
 	_, err := opener.Open(context.Background(), "", false)
-	if err == nil || strings.Contains(err.Error(), "secret-canary") || !store.closed {
-		t.Fatalf("error=%v closed=%t", err, store.closed)
+	if err == nil || strings.Contains(err.Error(), "secret-canary") || !store.Closed {
+		t.Fatalf("error=%v closed=%t", err, store.Closed)
 	}
 }
 
-func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *memoryStore) {
+func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (statedir.Scope, *credstoretest.Store) {
 	t.Helper()
 	statedirtest.Hermetic(t)
 	scope := statedir.Scope{Name: config.Service}
@@ -107,25 +107,7 @@ func configuredStore(t *testing.T, now time.Time, envelope token.Envelope) (stat
 	if err != nil {
 		t.Fatal(err)
 	}
-	return scope, &memoryStore{values: map[string]string{"default/oauth_token": string(encoded)}}
-}
-
-type memoryStore struct {
-	values map[string]string
-	closed bool
-}
-
-func (store *memoryStore) Close() error { store.closed = true; return nil }
-func (store *memoryStore) Get(profile, key string) (string, error) {
-	value, ok := store.values[profile+"/"+key]
-	if !ok {
-		return "", credstore.ErrNotFound
-	}
-	return value, nil
-}
-func (store *memoryStore) Set(profile, key, value string, _ ...credstore.SetOpt) error {
-	store.values[profile+"/"+key] = value
-	return nil
+	return scope, &credstoretest.Store{Values: map[string]string{"default/oauth_token": string(encoded)}}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

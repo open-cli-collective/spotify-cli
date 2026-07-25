@@ -10,26 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-cli-collective/cli-common/credstore"
 	"github.com/open-cli-collective/cli-common/statedir"
 	"github.com/open-cli-collective/cli-common/statedirtest"
 
 	"github.com/open-cli-collective/spotify-cli/internal/cmd/root"
 	"github.com/open-cli-collective/spotify-cli/internal/config"
 	"github.com/open-cli-collective/spotify-cli/internal/credentials"
+	"github.com/open-cli-collective/spotify-cli/internal/credstoretest"
 	"github.com/open-cli-collective/spotify-cli/internal/exitcode"
 )
-
-type processFailStore struct{ err error }
-
-func (s processFailStore) Backend() (credstore.Backend, credstore.Source) {
-	return credstore.BackendMemory, credstore.SourceExplicit
-}
-func (s processFailStore) Close() error                                          { return nil }
-func (s processFailStore) Get(string, string) (string, error)                    { return "", s.err }
-func (s processFailStore) Set(string, string, string, ...credstore.SetOpt) error { return s.err }
-func (s processFailStore) Delete(string, string) error                           { return s.err }
-func (s processFailStore) Exists(string, string) (bool, error)                   { return false, s.err }
 
 func TestUnknownCommandsExitUsage(t *testing.T) {
 	for _, args := range [][]string{{"frobnicate"}, {"config", "frobnicate"}} {
@@ -114,7 +103,7 @@ func TestCredentialStoreFailureIsSecretSafeAtProcessBoundary(t *testing.T) {
 				Scope: statedir.Scope{Name: config.Service}, Cache: statedir.Cache{Tool: config.Tool}, Data: statedir.Data{Tool: config.Tool},
 				Now: func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) },
 				OpenStore: func(credentials.OpenRequest) (credentials.Store, error) {
-					return processFailStore{err: errors.New("backend echoed " + canary)}, nil
+					return &credstoretest.Store{SetErr: errors.New("backend echoed " + canary)}, nil
 				},
 			})
 			cmd.SetArgs(args)

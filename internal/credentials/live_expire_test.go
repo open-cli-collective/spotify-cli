@@ -1,10 +1,12 @@
 //go:build spotify_live
 
-package livesmoke
+package credentials_test
 
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,5 +59,23 @@ func TestExpireCredential(t *testing.T) {
 	}
 	if err := store.Set(profile, credentials.OAuthTokenKey, string(encoded), credstore.WithOverwrite()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func requireLiveOptIn(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SPOTIFY_CLI_LIVE") != "1" || os.Getenv("SPOTIFY_CLI_LIVE_DEDICATED_ACCOUNT") != "1" {
+		t.Skip("live smoke opt-in is not enabled")
+	}
+	root := os.Getenv("SPOTIFY_CLI_LIVE_ROOT")
+	if root == "" {
+		t.Fatal("SPOTIFY_CLI_LIVE_ROOT is required")
+	}
+	for _, name := range []string{"HOME", "USERPROFILE", "AppData", "LocalAppData", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		value := os.Getenv(name)
+		relative, err := filepath.Rel(root, value)
+		if err != nil || value == "" || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			t.Fatalf("%s is not isolated under the live root", name)
+		}
 	}
 }

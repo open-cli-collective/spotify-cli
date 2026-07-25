@@ -68,6 +68,7 @@ func TestDecodeRejectsStrictlyWithoutLeaking(t *testing.T) {
 	tests := []string{
 		`{"version":2,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`,
 		`{"version":1,"access_token":"` + canary + `","token_type":"Basic","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]}`,
+		`{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":[]}`,
 		`{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":[""]}`,
 		`{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"],"extra":"` + canary + `"}`,
 		`{"version":1,"access_token":"` + canary + `","token_type":"Bearer","expires_at":"2026-07-22T13:00:00Z","scopes":["user-read-private"]} trailing`,

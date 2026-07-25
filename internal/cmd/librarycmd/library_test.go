@@ -255,15 +255,26 @@ func TestMutationsEmitOnlyAfterCompleteSuccess(t *testing.T) {
 }
 
 func TestListValidatesBeforeSession(t *testing.T) {
-	for _, args := range [][]string{
-		{"library", "tracks", "list", "--max", "0"},
-		{"library", "tracks", "list", "--max", "51"},
-		{"library", "tracks", "list", "--fields", "invalid"},
-		{"library", "tracks", "list", "--next-page-token", "bad"},
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"library", "tracks", "list", "--max", "0"}},
+		{args: []string{"library", "tracks", "list", "--max", "51"}},
+		{args: []string{"library", "tracks", "list", "--fields", "invalid"}},
+		{args: []string{"library", "tracks", "list", "--next-page-token", "bad"}},
+		{
+			args: []string{"library", "tracks", "list", "--max", "0", "--fields", "invalid", "--next-page-token", "bad"},
+			want: "--max must be between 1 and 50",
+		},
+		{
+			args: []string{"library", "tracks", "list", "--fields", "invalid", "--next-page-token", "bad"},
+			want: `unknown track field "invalid"; valid fields: ADDED_AT, ID, TRACK, ARTIST_IDS, ARTISTS, ALBUM_ID, ALBUM, DURATION, URI, URL, DISC_NUMBER, TRACK_NUMBER, EXPLICIT, RESTRICTION, ARTWORK`,
+		},
 	} {
-		_, _, opens, err := execute(&fakeSession{}, args...)
-		if exitcode.Code(err) != exitcode.Usage || opens != 0 {
-			t.Fatalf("args=%v opens=%d error=%v", args, opens, err)
+		_, _, opens, err := execute(&fakeSession{}, test.args...)
+		if exitcode.Code(err) != exitcode.Usage || opens != 0 || test.want != "" && err.Error() != test.want {
+			t.Fatalf("args=%v opens=%d error=%v", test.args, opens, err)
 		}
 	}
 }

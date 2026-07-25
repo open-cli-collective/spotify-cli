@@ -74,111 +74,104 @@ func New(deps Dependencies) *cobra.Command {
 }
 
 func newTrackList(deps Dependencies) *cobra.Command {
-	opts := listOptions{max: 10}
+	opts := &listOptions{}
+	var fields []output.TrackField
+	prepare := func() error {
+		if !opts.id {
+			var err error
+			fields, err = output.SelectSavedTrackFields(opts.fields, opts.extended, opts.artwork)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+		}
+		return nil
+	}
+	return listCommand("List saved tracks", "track", trackPageScope, opts, prepare, func(command *cobra.Command, offset int) error {
+		authenticated, err := openSession(command, deps, auth.ScopeUserLibraryRead)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = authenticated.Close() }()
+		page, err := authenticated.ListSavedTracks(command.Context(), opts.max, offset)
+		if err != nil {
+			return exitcode.New(cmdutil.Classify(err), err)
+		}
+		rendered := output.RenderSavedTracks(page.Items, fields)
+		if opts.id {
+			rendered = output.RenderSavedTrackIDs(page.Items)
+		}
+		return writeListOutput(command, rendered, "tracks", trackPageScope, page.Offset, page.Limit, page.HasNext)
+	})
+}
+
+func newAlbumList(deps Dependencies) *cobra.Command {
+	opts := &listOptions{}
+	var fields []output.AlbumField
+	prepare := func() error {
+		if !opts.id {
+			var err error
+			fields, err = output.SelectSavedAlbumFields(opts.fields, opts.extended, opts.artwork)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, err)
+			}
+		}
+		return nil
+	}
+	return listCommand("List saved albums", "album", albumPageScope, opts, prepare, func(command *cobra.Command, offset int) error {
+		authenticated, err := openSession(command, deps, auth.ScopeUserLibraryRead)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = authenticated.Close() }()
+		page, err := authenticated.ListSavedAlbums(command.Context(), opts.max, offset)
+		if err != nil {
+			return exitcode.New(cmdutil.Classify(err), err)
+		}
+		rendered := output.RenderSavedAlbums(page.Items, fields)
+		if opts.id {
+			rendered = output.RenderSavedAlbumIDs(page.Items)
+		}
+		return writeListOutput(command, rendered, "albums", albumPageScope, page.Offset, page.Limit, page.HasNext)
+	})
+}
+
+func listCommand(short, resource, pageScope string, opts *listOptions, prepare func() error, run func(*cobra.Command, int) error) *cobra.Command {
 	command := &cobra.Command{
-		Use: "list", Short: "List saved tracks", Args: cmdutil.NoArgs("list"),
+		Use: "list", Short: short, Args: cmdutil.NoArgs("list"),
 		RunE: func(command *cobra.Command, _ []string) error {
 			if opts.max < 1 || opts.max > 50 {
 				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
 			}
-			var fields []output.TrackField
-			var err error
-			if !opts.id {
-				fields, err = output.SelectSavedTrackFields(opts.fields, opts.extended, opts.artwork)
-				if err != nil {
-					return exitcode.New(exitcode.Usage, err)
-				}
+			if err := prepare(); err != nil {
+				return err
 			}
-			offset, err := pagetoken.Decode(trackPageScope, opts.nextPageToken, math.MaxInt-50)
+			offset, err := pagetoken.Decode(pageScope, opts.nextPageToken, math.MaxInt-50)
 			if err != nil {
 				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
 			}
-			authenticated, err := openSession(command, deps, auth.ScopeUserLibraryRead)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = authenticated.Close() }()
-			page, err := authenticated.ListSavedTracks(command.Context(), opts.max, offset)
-			if err != nil {
-				return exitcode.New(cmdutil.Classify(err), err)
-			}
-			rendered := output.RenderSavedTracks(page.Items, fields)
-			if opts.id {
-				rendered = output.RenderSavedTrackIDs(page.Items)
-			}
-			if _, err := io.WriteString(command.OutOrStdout(), rendered); err != nil {
-				return exitcode.New(exitcode.Generic, errors.New("writing saved tracks failed"))
-			}
-			if page.HasNext {
-				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(trackPageScope, page.Offset+page.Limit)); err != nil {
-					return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
-				}
-			}
-			return nil
+			return run(command, offset)
 		},
 	}
 	flags := command.Flags()
 	flags.IntVarP(&opts.max, "max", "m", 10, "Maximum results (1-50)")
 	flags.StringVar(&opts.nextPageToken, "next-page-token", "", "Opaque continuation token")
-	flags.BoolVar(&opts.id, "id", false, "Emit only track IDs")
+	flags.BoolVar(&opts.id, "id", false, "Emit only "+resource+" IDs")
 	flags.StringVar(&opts.fields, "fields", "", "Comma-separated output fields")
-	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent track fields")
+	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent "+resource+" fields")
 	flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
 	return command
 }
 
-func newAlbumList(deps Dependencies) *cobra.Command {
-	opts := listOptions{max: 10}
-	command := &cobra.Command{
-		Use: "list", Short: "List saved albums", Args: cmdutil.NoArgs("list"),
-		RunE: func(command *cobra.Command, _ []string) error {
-			if opts.max < 1 || opts.max > 50 {
-				return exitcode.New(exitcode.Usage, errors.New("--max must be between 1 and 50"))
-			}
-			var fields []output.AlbumField
-			var err error
-			if !opts.id {
-				fields, err = output.SelectSavedAlbumFields(opts.fields, opts.extended, opts.artwork)
-				if err != nil {
-					return exitcode.New(exitcode.Usage, err)
-				}
-			}
-			offset, err := pagetoken.Decode(albumPageScope, opts.nextPageToken, math.MaxInt-50)
-			if err != nil {
-				return exitcode.New(exitcode.Usage, errors.New("invalid --next-page-token"))
-			}
-			authenticated, err := openSession(command, deps, auth.ScopeUserLibraryRead)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = authenticated.Close() }()
-			page, err := authenticated.ListSavedAlbums(command.Context(), opts.max, offset)
-			if err != nil {
-				return exitcode.New(cmdutil.Classify(err), err)
-			}
-			rendered := output.RenderSavedAlbums(page.Items, fields)
-			if opts.id {
-				rendered = output.RenderSavedAlbumIDs(page.Items)
-			}
-			if _, err := io.WriteString(command.OutOrStdout(), rendered); err != nil {
-				return exitcode.New(exitcode.Generic, errors.New("writing saved albums failed"))
-			}
-			if page.HasNext {
-				if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(albumPageScope, page.Offset+page.Limit)); err != nil {
-					return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
-				}
-			}
-			return nil
-		},
+func writeListOutput(command *cobra.Command, rendered, plural, pageScope string, offset, limit int, hasNext bool) error {
+	if _, err := io.WriteString(command.OutOrStdout(), rendered); err != nil {
+		return exitcode.New(exitcode.Generic, errors.New("writing saved "+plural+" failed"))
 	}
-	flags := command.Flags()
-	flags.IntVarP(&opts.max, "max", "m", 10, "Maximum results (1-50)")
-	flags.StringVar(&opts.nextPageToken, "next-page-token", "", "Opaque continuation token")
-	flags.BoolVar(&opts.id, "id", false, "Emit only album IDs")
-	flags.StringVar(&opts.fields, "fields", "", "Comma-separated output fields")
-	flags.BoolVar(&opts.extended, "extended", false, "Add less-frequent album fields")
-	flags.BoolVar(&opts.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
-	return command
+	if hasNext {
+		if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(pageScope, offset+limit)); err != nil {
+			return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
+		}
+	}
+	return nil
 }
 
 func newCheck(deps Dependencies, kind spotifyref.Kind) *cobra.Command {

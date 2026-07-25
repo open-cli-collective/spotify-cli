@@ -59,23 +59,10 @@ type searchOptions struct {
 }
 
 func newTrack(deps Dependencies) *cobra.Command {
-	options := searchOptions{}
-	command := &cobra.Command{
-		Use:   "track <query>",
-		Short: "Search tracks (at most 10 results per page)",
-		Args:  cmdutil.ExactArgs(1, "search track requires exactly one query"),
-		RunE: func(command *cobra.Command, args []string) error {
-			return runTrack(command, deps, args[0], options)
-		},
-	}
-	flags := command.Flags()
-	flags.IntVarP(&options.max, "max", "m", defaultMax, "Maximum results (1-10; Spotify development-mode cap)")
-	flags.StringVar(&options.nextPageToken, "next-page-token", "", "Opaque continuation token")
-	flags.BoolVar(&options.id, "id", false, "Emit only track IDs")
-	flags.StringVar(&options.fields, "fields", "", "Comma-separated output columns")
-	flags.BoolVar(&options.extended, "extended", false, "Add less-frequent track columns")
-	flags.BoolVar(&options.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
-	return command
+	options := &searchOptions{}
+	return searchCommand("track", options, func(command *cobra.Command, query string) error {
+		return runTrack(command, deps, query, *options)
+	})
 }
 
 func runTrack(command *cobra.Command, deps Dependencies, query string, options searchOptions) error {
@@ -107,21 +94,10 @@ func runTrack(command *cobra.Command, deps Dependencies, query string, options s
 }
 
 func newAlbum(deps Dependencies) *cobra.Command {
-	options := searchOptions{}
-	command := &cobra.Command{
-		Use:   "album <query>",
-		Short: "Search albums (at most 10 results per page)",
-		Args:  cmdutil.ExactArgs(1, "search album requires exactly one query"),
-		RunE:  func(command *cobra.Command, args []string) error { return runAlbum(command, deps, args[0], options) },
-	}
-	flags := command.Flags()
-	flags.IntVarP(&options.max, "max", "m", defaultMax, "Maximum results (1-10; Spotify development-mode cap)")
-	flags.StringVar(&options.nextPageToken, "next-page-token", "", "Opaque continuation token")
-	flags.BoolVar(&options.id, "id", false, "Emit only album IDs")
-	flags.StringVar(&options.fields, "fields", "", "Comma-separated output columns")
-	flags.BoolVar(&options.extended, "extended", false, "Add less-frequent album columns")
-	flags.BoolVar(&options.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
-	return command
+	options := &searchOptions{}
+	return searchCommand("album", options, func(command *cobra.Command, query string) error {
+		return runAlbum(command, deps, query, *options)
+	})
 }
 
 func runAlbum(command *cobra.Command, deps Dependencies, query string, options searchOptions) error {
@@ -153,19 +129,25 @@ func runAlbum(command *cobra.Command, deps Dependencies, query string, options s
 }
 
 func newArtist(deps Dependencies) *cobra.Command {
-	options := searchOptions{}
+	options := &searchOptions{}
+	return searchCommand("artist", options, func(command *cobra.Command, query string) error {
+		return runArtist(command, deps, query, *options)
+	})
+}
+
+func searchCommand(noun string, options *searchOptions, run func(*cobra.Command, string) error) *cobra.Command {
 	command := &cobra.Command{
-		Use:   "artist <query>",
-		Short: "Search artists (at most 10 results per page)",
-		Args:  cmdutil.ExactArgs(1, "search artist requires exactly one query"),
-		RunE:  func(command *cobra.Command, args []string) error { return runArtist(command, deps, args[0], options) },
+		Use:   noun + " <query>",
+		Short: "Search " + noun + "s (at most 10 results per page)",
+		Args:  cmdutil.ExactArgs(1, "search "+noun+" requires exactly one query"),
+		RunE:  func(command *cobra.Command, args []string) error { return run(command, args[0]) },
 	}
 	flags := command.Flags()
 	flags.IntVarP(&options.max, "max", "m", defaultMax, "Maximum results (1-10; Spotify development-mode cap)")
 	flags.StringVar(&options.nextPageToken, "next-page-token", "", "Opaque continuation token")
-	flags.BoolVar(&options.id, "id", false, "Emit only artist IDs")
+	flags.BoolVar(&options.id, "id", false, "Emit only "+noun+" IDs")
 	flags.StringVar(&options.fields, "fields", "", "Comma-separated output columns")
-	flags.BoolVar(&options.extended, "extended", false, "Add less-frequent artist columns")
+	flags.BoolVar(&options.extended, "extended", false, "Add less-frequent "+noun+" columns")
 	flags.BoolVar(&options.artwork, "include-artwork", false, "Add Spotify artwork dimensions and URLs")
 	return command
 }
@@ -218,21 +200,14 @@ func writeSearchOutput(command *cobra.Command, rendered, surface string, offset,
 	}
 	nextOffset := offset + limit
 	if hasNext && nextOffset <= maxOffset {
-		if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", encodePageToken(surface, nextOffset)); err != nil {
+		if _, err := fmt.Fprintf(command.ErrOrStderr(), "More results available (next: %s)\n", pagetoken.Encode(surface, nextOffset)); err != nil {
 			return exitcode.New(exitcode.Generic, errors.New("writing pagination notice failed"))
 		}
 	}
 	return nil
 }
 
-func encodePageToken(surface string, offset int) string {
-	return pagetoken.Encode(surface, offset)
-}
-
 func decodePageToken(surface, value string) (int, error) {
-	if len(value) > 64 {
-		return 0, errors.New("invalid --next-page-token")
-	}
 	offset, err := pagetoken.Decode(surface, value, maxOffset)
 	if err != nil {
 		return 0, errors.New("invalid --next-page-token")

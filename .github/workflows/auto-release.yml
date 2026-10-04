@@ -18,6 +18,7 @@ jobs:
     # The CLI family intentionally follows the centrally maintained rolling v1.
     uses: open-cli-collective/.github/.github/workflows/auto-release.yml@v1
     with:
+      release-paths: "**.go,go.mod,go.sum,version.txt,.goreleaser.yml"
       dry-run: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry-run == true || inputs.dry-run == 'true') }}
     secrets:
       tag-token: ${{ secrets.TAP_GITHUB_TOKEN }}

@@ -10,6 +10,7 @@ on:
       - ".goreleaser.yml"
       - "Makefile"
       - "scripts/verify-package-render.sh"
+      - "scripts/test-chocolatey-install.ps1"
       - "packaging/**"
       - ".github/workflows/auto-release.yml"
       - ".github/workflows/release.yml"
@@ -39,3 +40,11 @@ jobs:
         run: goreleaser check
       - name: Build and verify release snapshot
         run: make snapshot
+
+  chocolatey-architecture-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Chocolatey architecture bindings
+        shell: pwsh
+        run: ./scripts/test-chocolatey-install.ps1

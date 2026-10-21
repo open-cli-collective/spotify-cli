@@ -2,6 +2,8 @@ module github.com/open-cli-collective/spotify-cli
 
 go 1.26
 
+toolchain go1.26.10
+
 require (
 	github.com/charmbracelet/huh v0.8.0
 	github.com/open-cli-collective/cli-common v0.4.1

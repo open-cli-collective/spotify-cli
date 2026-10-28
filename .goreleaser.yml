@@ -102,8 +102,8 @@ homebrew_casks:
     description: Spotify from the command line
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/sptfy"]
+        install_steps: |
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/sptfy"]
     caveats: |
       Create a Spotify application, then run:
         sptfy init --client-id YOUR_CLIENT_ID

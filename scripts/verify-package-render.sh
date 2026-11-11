@@ -67,8 +67,8 @@ require_text "sptfy_v0.0.0_windows_arm64.zip" packaging/winget/OpenCLICollective
 require_file packaging/chocolatey/spotify-cli.nuspec
 require_file packaging/chocolatey/tools/chocolateyInstall.ps1
 require_text "<id>spotify-cli</id>" packaging/chocolatey/spotify-cli.nuspec
-require_text 'releases/download/v${version}' packaging/chocolatey/tools/chocolateyInstall.ps1
-require_text 'sptfy_v${version}_windows_${arch}.zip' packaging/chocolatey/tools/chocolateyInstall.ps1
+require_text 'URL_AMD64_PLACEHOLDER' packaging/chocolatey/tools/chocolateyInstall.ps1
+require_text 'URL_ARM64_PLACEHOLDER' packaging/chocolatey/tools/chocolateyInstall.ps1
 
 require_text 'homebrew-tap-token: ${{ secrets.TAP_GITHUB_TOKEN }}' .github/workflows/release.yml
 require_text 'chocolatey-api-key: ${{ secrets.CHOCOLATEY_API_KEY }}' .github/workflows/release.yml
